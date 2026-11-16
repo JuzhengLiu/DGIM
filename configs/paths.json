@@ -1,0 +1,30 @@
+{
+  "paths": {
+    "data_config": "configs/multi_modality_512.py",
+    "model_config": "configs/dgim_ds.py",
+    "train_data_root": "../BIT_training_dataset/BIT_multi-modal_datasets_homography_30_rotation",
+    "train_pose_root": null,
+    "train_npz_root": null,
+    "train_list_path": null,
+    "train_intrinsic_path": null,
+    "val_data_root": null,
+    "val_pose_root": null,
+    "val_npz_root": null,
+    "val_list_path": null,
+    "val_intrinsic_path": null,
+    "test_data_root": null,
+    "test_pose_root": null,
+    "test_npz_root": null,
+    "test_list_path": null,
+    "test_intrinsic_path": null,
+    "style_dir": "src/fast_neural_style/styles",
+    "style_checkpoint": "src/fast_neural_style/weights/epoch5.pth",
+    "matcher_checkpoint": "weights/dgim_512.ckpt",
+    "pretrained_checkpoint": null,
+    "resume_checkpoint": null,
+    "log_dir": "outputs/training",
+    "checkpoint_dir": null,
+    "sample_dir": "sample",
+    "demo_output_dir": "outputs/matches"
+  }
+}
