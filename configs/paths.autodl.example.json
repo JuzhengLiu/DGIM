@@ -1,7 +1,0 @@
-{
-  "paths": {
-    "train_data_root": "/root/autodl-tmp/BIT_training_dataset/BIT_multi-modal_datasets_homography_30_rotation",
-    "log_dir": "/root/autodl-tmp/DGIM_outputs/training",
-    "demo_output_dir": "/root/autodl-tmp/DGIM_outputs/matches"
-  }
-}

@@ -1,20 +1,21 @@
 """Load repository-relative resource paths without importing the model stack.
 
-The default configuration is ``configs/paths.json``. An explicit configuration
+The default configuration is ``configs/paths.yml``. An explicit configuration
 path (or ``DGIM_PATHS_CONFIG``) overlays the defaults; otherwise an optional
-``configs/paths.local.json`` overlays them. Relative paths in every file are
-anchored to the repository root, not to the working directory or JSON file.
+``configs/paths.local.yml`` overlays them. Relative paths in every file are
+anchored to the repository root, not to the working directory or YML file.
 """
 
-import json
 import os
 from pathlib import Path, PureWindowsPath
 import re
 
+import yaml
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CONFIG = REPO_ROOT / "configs" / "paths.json"
-LOCAL_CONFIG = REPO_ROOT / "configs" / "paths.local.json"
+DEFAULT_CONFIG = REPO_ROOT / "configs" / "paths.yml"
+LOCAL_CONFIG = REPO_ROOT / "configs" / "paths.local.yml"
 
 PATH_KEYS = frozenset({
     "data_config", "model_config",
@@ -82,8 +83,8 @@ def resolve_path(value):
 def _read_paths(config_file):
     try:
         with config_file.open("r", encoding="utf-8-sig") as stream:
-            document = json.load(stream)
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            document = yaml.safe_load(stream)
+    except (OSError, UnicodeError, yaml.YAMLError) as error:
         raise ValueError("Cannot read path configuration {}: {}".format(config_file, error)) from error
 
     if not isinstance(document, dict) or set(document) != {"paths"}:
@@ -110,7 +111,7 @@ def load_paths(config_path=None):
     """Return all configured paths as absolute strings or optional None values.
 
     Precedence: defaults < explicit file / DGIM_PATHS_CONFIG. Only when neither
-    selector is present does paths.local.json override the defaults. An explicit
+    selector is present does paths.local.yml override the defaults. An explicit
     argument takes precedence over DGIM_PATHS_CONFIG. Selecting a file does not
     change how relative resource paths are resolved.
     """

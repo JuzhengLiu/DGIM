@@ -39,7 +39,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Match sorted image pairs with DGIM. A CUDA GPU is required. "
                     "Relative paths are resolved from the repository root.")
-    parser.add_argument("--paths", help="Path configuration JSON; defaults to configs/paths.json with optional local overrides")
+    parser.add_argument("--paths", help="Path configuration YML; defaults to configs/paths.yml with optional local overrides")
     parser.add_argument("--checkpoint", help="Override matcher_checkpoint in the path configuration")
     parser.add_argument("--input-dir", help="Override sample_dir; consecutive sorted images form a pair")
     parser.add_argument("--output-dir", help="Override demo_output_dir for saved match figures")

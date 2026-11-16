@@ -1,0 +1,8 @@
+# 首次使用时复制为 configs/paths.local.yml，再按实际位置修改。
+# 其他路径自动继承 paths.yml；后续更新代码不必重复复制。
+paths:
+  train_data_root: '/root/autodl-tmp/BIT_training_dataset/BIT_multi-modal_datasets_homography_30_rotation'
+  log_dir: '/root/autodl-tmp/DGIM_outputs/training'
+  demo_output_dir: '/root/autodl-tmp/DGIM_outputs/matches'
+  # 如匹配器权重不放在默认 weights/ 下，可取消下一行注释并填写实际位置。
+  # matcher_checkpoint: '/root/autodl-tmp/models/dgim_512.ckpt'

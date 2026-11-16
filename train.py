@@ -31,7 +31,7 @@ def parse_args():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument(
         '--paths', dest='paths_config', type=str, default=None,
-        help='JSON path overrides; default: configs/paths.json plus optional paths.local.json')
+        help='YML path overrides; default: configs/paths.yml plus optional paths.local.yml')
     parser.add_argument(
         '--data_cfg_path', type=str, default=None,
         help='override paths.data_config (relative to the repository root)')

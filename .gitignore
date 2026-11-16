@@ -217,6 +217,10 @@ BIT_multi-modal_datasets_homography_*.zip
 # Per-machine paths, generated outputs and analysis scratch files
 configs/paths.local.json
 configs/paths.*.local.json
+configs/paths.local.yml
+configs/paths.*.local.yml
+configs/paths.local.yaml
+configs/paths.*.local.yaml
 outputs/
 logs/
 lightning_logs/

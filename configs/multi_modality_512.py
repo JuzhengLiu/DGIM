@@ -1,6 +1,6 @@
 from configs.base import cfg
 
-# Filesystem locations are supplied by configs/paths.json in train.py.
+# Filesystem locations are supplied by configs/paths.yml in train.py.
 # The released DataModule only implements training; no MegaDepth test set is bundled.
 cfg.DATASET.TRAINVAL_DATA_SOURCE = "Multi-Modality"
 cfg.DATASET.TEST_DATA_SOURCE = None

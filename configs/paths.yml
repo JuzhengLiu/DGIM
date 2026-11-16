@@ -1,0 +1,41 @@
+# 路径统一在这里管理；相对路径以仓库根目录为基准。
+# 每台机器的设置建议写进 paths.local.yml，只写要覆盖的项即可。
+# Windows 路径建议用单引号和正斜杠，例如 'D:/datasets/BIT_training_dataset'。
+paths:
+  # 模型与数据设置文件
+  data_config: 'configs/multi_modality_512.py'
+  model_config: 'configs/dgim_ds.py'
+
+  # 训练数据（单独上传，不放入 GitHub）；下一层应为 scene01 等场景目录
+  train_data_root: '../BIT_training_dataset/BIT_multi-modal_datasets_homography_30_rotation'
+
+  # 风格生成器：图片和权重已随仓库提供
+  style_dir: 'src/fast_neural_style/styles'
+  style_checkpoint: 'src/fast_neural_style/weights/epoch5.pth'
+
+  # 匹配器权重：需要自行下载；不能用上面的风格权重替代
+  matcher_checkpoint: 'weights/dgim_512.ckpt'
+  pretrained_checkpoint: null  # 可选：训练时只加载模型权重
+  resume_checkpoint: null      # 可选：恢复训练状态；与上一项按需择一使用
+
+  # 输出目录：在实际运行时创建
+  log_dir: 'outputs/training'
+  checkpoint_dir: null         # 默认跟随日志；非空则作为独立 checkpoint 输出根
+  sample_dir: 'sample'         # demo 输入目录 / GUI 选图初始目录
+  demo_output_dir: 'outputs/matches'
+
+  # 以下为原配置兼容字段，当前 BIT 训练和 demo 不使用，保持 null 即可
+  train_pose_root: null
+  train_npz_root: null
+  train_list_path: null
+  train_intrinsic_path: null
+  val_data_root: null
+  val_pose_root: null
+  val_npz_root: null
+  val_list_path: null
+  val_intrinsic_path: null
+  test_data_root: null
+  test_pose_root: null
+  test_npz_root: null
+  test_list_path: null
+  test_intrinsic_path: null
