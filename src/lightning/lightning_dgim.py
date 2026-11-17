@@ -38,6 +38,7 @@ class PL_DGIM(pl.LightningModule):
         self.matcher = DGIM(config=self.dgim_cfg)
         self.loss = DGIMLoss(lower_config)
         self.dump_dir = dump_dir
+        self.initialization_checkpoint = pretrained_ckpt
         self.teacher_enabled = (
             config.TRAINER.STAGE == "pretrain"
             and config.TEACHER.ENABLED
@@ -127,30 +128,46 @@ class PL_DGIM(pl.LightningModule):
         checkpoint["dgim_config"] = config_to_dict(self.dgim_cfg)
         checkpoint["training_config"] = config_to_dict(self.training_config)
         checkpoint["training_runtime"] = self._runtime_metadata()
+        checkpoint_callback = self.trainer.checkpoint_callback
+        checkpoint["training_run"] = {
+            "stage": self.config.TRAINER.STAGE,
+            "run_name": self.config.TRAINER.RUN_NAME,
+            "initialization_checkpoint": self.initialization_checkpoint,
+            "checkpoint_dir": (
+                str(checkpoint_callback.dirpath) if checkpoint_callback is not None else None
+            ),
+            "log_dir": self.trainer.log_dir,
+        }
 
     def on_load_checkpoint(self, checkpoint):
+        self.initialization_checkpoint = checkpoint.get("training_run", {}).get("initialization_checkpoint")
         saved = checkpoint.get("training_config")
         if not isinstance(saved, Mapping):
             raise ValueError(
                 "This checkpoint has no training metadata for a safe Lightning 2 resume. "
                 "Use --pretrained to load its matcher and start a new run."
             )
+        saved_trainer = saved.get("TRAINER", {})
+        if "LR" not in saved_trainer:
+            raise ValueError(
+                "This checkpoint uses the v4 training schedule. Load its matcher with "
+                "--pretrained in a new run; v5 --resume requires v5 training metadata."
+            )
         for section in ("DGIM", "TEACHER"):
             if saved.get(section) != self.training_config[section]:
                 raise ValueError(f"--resume requires the same {section} configuration as the checkpoint.")
-        saved_trainer = saved.get("TRAINER", {})
         # Maximum epochs may be extended. Stage, optimization, and distillation
         # settings must remain unchanged to preserve the resumed schedule.
         trainer_keys = (
-            "STAGE", "OPTIMIZER", "PRETRAIN_LR", "FINETUNE_LR", "ADAM_DECAY",
+            "STAGE", "OPTIMIZER", "LR", "ADAM_DECAY",
             "ADAMW_DECAY", "WARMUP_EPOCHS", "WARMUP_RATIO",
-            "PRETRAIN_MILESTONES", "FINETUNE_MILESTONES", "MSLR_GAMMA",
+            "MILESTONES", "MSLR_GAMMA",
             "GRADIENT_CLIPPING", "SEED",
         )
         for key in trainer_keys:
             if saved_trainer.get(key) != self.training_config["TRAINER"][key]:
                 raise ValueError(f"--resume requires unchanged TRAINER.{key}.")
-        for key in ("MGDPT_IMG_RESIZE", "MGDPT_IMG_PAD", "MGDPT_DF", "AUGMENTATION_TYPE"):
+        for key in ("MGDPT_IMG_RESIZE", "MGDPT_IMG_PAD", "MGDPT_DF"):
             if saved.get("DATASET", {}).get(key) != self.training_config["DATASET"][key]:
                 raise ValueError(f"--resume requires unchanged DATASET.{key}.")
         self._resume_runtime = checkpoint.get("training_runtime")

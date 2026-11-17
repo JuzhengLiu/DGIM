@@ -5,6 +5,8 @@ paths:
   # 模型与数据设置文件
   data_config: 'configs/multi_modality_512.py'
   model_config: 'configs/dgim_ds.py'
+  pretrain_config: 'configs/pretrain.yml'
+  finetune_config: 'configs/finetune.yml'
 
   # 训练数据（单独上传，不放入 GitHub）；下一层应为 scene01 等场景目录
   train_data_root: '../BIT_training_dataset/BIT_multi-modal_datasets_homography_30_rotation'
@@ -13,11 +15,13 @@ paths:
   style_dir: 'src/fast_neural_style/styles'
   style_checkpoint: 'src/fast_neural_style/weights/epoch5.pth'
 
-  # v4 新模型须自己训练；原版 dgim_512.ckpt 仍可通过 demo --checkpoint 指定。
-  matcher_checkpoint: 'outputs/checkpoints/repvit_dino/finetune/last.ckpt'
-  # 默认预训练从随机参数开始；微调由这里载入上一阶段的匹配器。
-  pretrained_checkpoint: 'outputs/checkpoints/repvit_dino/pretrain/last.ckpt'
-  resume_checkpoint: null      # 可选：恢复训练状态；与上一项按需择一使用
+  # 两阶段各自的初始化和恢复路径；init只读匹配器，resume恢复完整训练状态。
+  pretrain_init_checkpoint: null   # 默认随机初始化
+  finetune_init_checkpoint: 'outputs/checkpoints/repvit_dino/pretrain/run01/last.ckpt'
+  pretrain_resume_checkpoint: null
+  finetune_resume_checkpoint: null
+  # 推理权重可独立选择，不决定训练加载哪个checkpoint。
+  matcher_checkpoint: 'outputs/checkpoints/repvit_dino/finetune/run01/last.ckpt'
 
   # 保留的上游参考资源；v4 定制学生随机初始化，不加载分类权重。
   repvit_source_dir: 'third_party/repvit'

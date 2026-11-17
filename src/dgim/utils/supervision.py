@@ -52,7 +52,7 @@ def spvs_coarse(data, config):
     grid_pt1_c = create_meshgrid(h1, w1, False, device).reshape(1, h1*w1, 2).repeat(N, 1, 1)
     grid_pt1_i = scale1 * grid_pt1_c
 
-    # mask padded region to (0, 0), so no need to manually mask conf_matrix_gt
+    # Use a finite placeholder for padded coordinates; GT validity is masked below.
     if 'mask0' in data:
         grid_pt0_i = mask_pts_at_padded_regions(grid_pt0_i, data['mask0'])
         grid_pt1_i = mask_pts_at_padded_regions(grid_pt1_i, data['mask1'])
@@ -79,7 +79,7 @@ def spvs_coarse(data, config):
     nearest_index0[out_bound_mask(w_pt1_c_round, w0, h0)] = 0
 
     arange_1 = torch.arange(h0 * w0, device=device)[None].repeat(N, 1)
-    arange_0 = torch.arange(h0 * w0, device=device)[None].repeat(N, 1)
+    arange_0 = torch.arange(h1 * w1, device=device)[None].repeat(N, 1)
     arange_1[nearest_index1 == 0] = 0
     arange_0[nearest_index0 == 0] = 0
     arange_b = torch.arange(N, device=device).unsqueeze(1)
@@ -88,6 +88,12 @@ def spvs_coarse(data, config):
     conf_matrix_gt = torch.zeros(N, h0 * w0, h1 * w1, device=device)
     conf_matrix_gt[arange_b, arange_1, nearest_index1] = 1
     conf_matrix_gt[arange_b, nearest_index0, arange_0] = 1
+    if 'mask0' in data:
+        # Zeroing padded coordinates above is insufficient for a translated
+        # homography: (0,0) can warp into the valid image. Exclude padded pairs
+        # before sampling the ground-truth windows for fine supervision.
+        conf_matrix_gt.masked_fill_(~data['mask0'].flatten(-2)[..., None], 0)
+        conf_matrix_gt.masked_fill_(~data['mask1'].flatten(-2)[:, None], 0)
     conf_matrix_gt[:, 0, 0] = False
 
     b_ids, i_ids, j_ids = conf_matrix_gt.nonzero(as_tuple=True)
@@ -96,7 +102,7 @@ def spvs_coarse(data, config):
 
     # 5. save coarse matches(gt) for training fine level
     if len(b_ids) == 0:
-        logger.warning(f"No groundtruth coarse match found for: {data['pair_names']}")
+        logger.warning("No groundtruth coarse match found for pair ids: {}", data['pair_id'])
         # this won't affect fine-level loss calculation
         b_ids = torch.tensor([0], device=device)
         i_ids = torch.tensor([0], device=device)
@@ -166,6 +172,21 @@ def spvs_fine(data, config):
     # unfold (crop windows) all local windows
     stride_f = data['hw0_f'][0] // data['hw0_c'][0]
 
+    def valid_windows(mask_key, height, width, indices):
+        if mask_key in data:
+            valid = F.interpolate(data[mask_key][:, None].float(),
+                                  size=(height, width), mode='nearest')
+        else:
+            valid = torch.ones(N, 1, height, width, device=device)
+        valid = F.unfold(valid, kernel_size=W_f, stride=stride_f,
+                         padding=W_f // 2).transpose(1, 2)
+        return valid[b_ids, indices].bool()
+
+    # Unfold pads coordinates with (0,0), which is also a real image point.
+    # Track validity separately so those artificial positions cannot be GT.
+    valid0 = valid_windows('mask0', h0, w0, i_ids)
+    valid1 = valid_windows('mask1', h1, w1, j_ids)
+
     grid_pt0_i = rearrange(grid_pt0_i, 'n h w c -> n c h w')
     grid_pt0_i = F.unfold(grid_pt0_i, kernel_size=(W_f, W_f), stride=stride_f, padding=W_f // 2)
     grid_pt0_i = rearrange(grid_pt0_i, 'n (c ww) l -> n l ww c', ww=W_f ** 2)
@@ -206,11 +227,15 @@ def spvs_fine(data, config):
     def out_bound_mask(pt, w, h):
         return (pt[..., 0] < 0) + (pt[..., 0] >= w) + (pt[..., 1] < 0) + (pt[..., 1] >= h)
 
-    nearest_index1[out_bound_mask(w_pt0_f_round, W_f, W_f)] = 0
-    nearest_index0[out_bound_mask(w_pt1_f_round, W_f, W_f)] = 0
+    inside0 = ~out_bound_mask(w_pt0_f_round, W_f, W_f)
+    inside1 = ~out_bound_mask(w_pt1_f_round, W_f, W_f)
+    nearest_index1[~inside0] = 0
+    nearest_index0[~inside1] = 0
 
-    loop_back = torch.stack([nearest_index0[_b][_i] for _b, _i in enumerate(nearest_index1)], dim=0)
+    loop_back = nearest_index0.gather(1, nearest_index1)
     correct_0to1 = loop_back == torch.arange(W_f * W_f, device=device)[None].repeat(M, 1)
+    correct_0to1 &= inside0 & inside1.gather(1, nearest_index1)
+    correct_0to1 &= valid0 & valid1.gather(1, nearest_index1)
     correct_0to1[:, 0] = False  # ignore the top-left corner
 
     # 4. construct a gt conf_matrix

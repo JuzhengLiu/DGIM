@@ -7,5 +7,7 @@ paths:
   demo_output_dir: '/root/autodl-tmp/DGIM_outputs/matches'
   # 如需使用另一个匹配器checkpoint，可取消下一行注释并填写实际位置。
   # matcher_checkpoint: '/root/autodl-tmp/models/dgim_512.ckpt'
-  # DINO 教师权重单独上传。v4 学生不需要 RepViT 分类预训练权重。
+  # 第二阶段加载哪一轮，在这里指定；默认来自第一阶段run01的last.ckpt。
+  # finetune_init_checkpoint: '/root/autodl-tmp/DGIM/outputs/checkpoints/repvit_dino/pretrain/run01/last.ckpt'
+  # DINO 教师权重单独上传。定制学生不需要 RepViT 分类预训练权重。
   # teacher_checkpoint: '/root/autodl-tmp/models/dinov3_convnext_large_pretrain_lvd1689m-61fa432d.pth'

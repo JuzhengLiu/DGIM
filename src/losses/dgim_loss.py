@@ -147,21 +147,21 @@ class DGIMLoss(nn.Module):
         loss_c = self.compute_coarse_loss(data, weight=c_weight)
         loss_c *= self.loss_config['coarse_weight']
         loss = loss_c
-        loss_scalars.update({"loss_c": loss_c.clone().detach().cpu()})
+        loss_scalars.update({"loss_c": loss_c.detach()})
 
         # 2. fine-level matching loss for windows
         loss_f = self.compute_fine_loss(data)
         loss_f *= self.loss_config['fine_weight']
         loss = loss + loss_f
-        loss_scalars.update({"loss_f": loss_f.clone().detach().cpu()})
+        loss_scalars.update({"loss_f": loss_f.detach()})
 
         # 3. sub-pixel refinement loss
         loss_sub = self.compute_sub_pixel_loss(data)
         loss_sub *= self.loss_config['sub_weight']
         loss = loss + loss_sub
-        loss_scalars.update({"loss_sub": loss_sub.clone().detach().cpu()})
+        loss_scalars.update({"loss_sub": loss_sub.detach()})
 
-        loss_scalars.update({'loss': loss.clone().detach().cpu()})
+        loss_scalars.update({'loss': loss.detach()})
         data.update({"loss": loss,
                      "loss_c": loss_c,
                      "loss_f": loss_f,

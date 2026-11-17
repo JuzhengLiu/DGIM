@@ -5,15 +5,12 @@ import os
 import re
 import cv2
 import random
-import warnings
 import numpy as np
 from pathlib import Path
 
 from src.config.paths import load_paths, resolve_path
 from src.datasets.preprocessing import enumerate_training_pairs, prepare_gray_image, read_clean_gray
 from src.teacher.cache import TeacherCache
-
-warnings.filterwarnings("ignore")
 
 
 class MultiModality(Dataset):
@@ -23,24 +20,23 @@ class MultiModality(Dataset):
                  img_resize=None,
                  df=None,
                  img_padding=False,
-                 augment_fn=None,
                  style_dir=None,
                  style_checkpoint=None,
+                 style_device='cpu',
                  training_stage='pretrain',
                  teacher_cache_dir=None,
                  teacher_enabled=False,
-                 **kwargs):
+                 coarse_scale=0.125):
         """
-        Manage one scene(npz_path) of Multi-Modality dataset.
+        Read BIT image pairs and apply the selected DGIM training stage.
 
         Args:
-            root_dir (str): multi-modality root directory that has `phoenix`.
+            root_dir (str): BIT root directory containing scene subdirectories.
             mode (str): options are ['train', 'val', 'test'].
-            img_resize (int, optional): the longer edge of resized images. None for no resize. 640 is recommended.
-                                        This is useful during training with batches and testing with memory intensive algorithms.
+            img_resize (int, optional): the longer edge of resized images. None for no resize.
             df (int, optional): image size division factor. NOTE: this will change the final image size after img_resize.
             img_padding (bool): If set to 'True', zero-pad the image to squared size. This is useful during training.
-            augment_fn (callable, optional): augments images with pre-defined visual effects.
+            style_device: training device used by the frozen generator during finetuning.
         """
         super().__init__()
         self.root_dir = resolve_path(os.fspath(root_dir))
@@ -54,15 +50,12 @@ class MultiModality(Dataset):
         self.build_dataset()
 
         # parameters for image resizing and padding
-        # if mode == 'train':
-        #     assert img_resize is not None and img_padding
         self.img_resize = img_resize
         self.df = df
         self.img_padding = img_padding
 
         # for training DGIM
-        self.augment_fn = augment_fn if mode == 'train' else None
-        self.coarse_scale = kwargs.get('coarse_scale', 0.125)
+        self.coarse_scale = coarse_scale
 
         # Pretraining is clean and never constructs or loads the style generator.
         self.style_model = None
@@ -72,7 +65,7 @@ class MultiModality(Dataset):
             if not Path(self.style_folder_path).is_dir():
                 raise FileNotFoundError(f'Style directory not found: {self.style_folder_path}. Update paths.style_dir.')
             self.style_path_list = self.build_style_path_list()
-            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            self.device = torch.device(style_device)
             self.style_model_path = resolve_path(os.fspath(style_checkpoint)) if style_checkpoint is not None else paths['style_checkpoint']
             if not Path(self.style_model_path).is_file():
                 raise FileNotFoundError(f'Style checkpoint not found: {self.style_model_path}. Update paths.style_checkpoint.')
@@ -121,13 +114,11 @@ class MultiModality(Dataset):
 
         # noinspection PyTypeChecker
         image0, mask0, scale0 = self.read_megadepth_gray(
-            item["image0_path"], self.img_resize, self.df, self.img_padding, None, stylizing_option0, thermal_option0)
-        # np.random.choice([self.augment_fn, None], p=[0.5, 0.5]))
+            item["image0_path"], self.img_resize, self.df, self.img_padding, stylizing_option0, thermal_option0)
 
         # noinspection PyTypeChecker
         image1, mask1, scale1 = self.read_megadepth_gray(
-            item["image1_path"], self.img_resize, self.df, self.img_padding, None, stylizing_option1, thermal_option1)
-        # np.random.choice([self.augment_fn, None], p=[0.5, 0.5]))
+            item["image1_path"], self.img_resize, self.df, self.img_padding, stylizing_option1, thermal_option1)
 
         # read and compute relative poses
         # noinspection PyTypeChecker
@@ -163,7 +154,7 @@ class MultiModality(Dataset):
 
     def build_style_path_list(self):
         style_path_list = []
-        style_names = os.listdir(self.style_folder_path)
+        style_names = sorted(os.listdir(self.style_folder_path))
         for style_name in style_names:
             style_path = os.path.join(self.style_folder_path, style_name)
             style_path_list.append(style_path)
@@ -206,7 +197,6 @@ class MultiModality(Dataset):
         with torch.no_grad():
             output = self.style_model(content_image, style_image)
             output = output.squeeze(0).clamp(0, 255).cpu().numpy().transpose(1, 2, 0).astype("uint8")
-        torch.cuda.empty_cache()
 
         # thermal_transform = BGRtoThermal()
         # guide_image = thermal_transform.augment_pseudo_thermal(cv2.imread(content_path))  # thermal image
@@ -235,12 +225,11 @@ class MultiModality(Dataset):
 
         return image  # (h, w)
 
-    def read_megadepth_gray(self, path, resize=None, df=None, padding=False, augment_fn=None, stylizing_option=False, thermal_option=False):
+    def read_megadepth_gray(self, path, resize=None, df=None, padding=False, stylizing_option=False, thermal_option=False):
         """
         Args:
             resize (int, optional): the longer edge of resized images. None for no resize.
             padding (bool): If set to 'True', zero-pad resized images to squared size.
-            augment_fn (callable, optional): augments images with pre-defined visual effects
         Returns:
             image (torch.tensor): (1, h, w)
             mask (torch.tensor): (h, w)
@@ -286,8 +275,8 @@ class BGRtoThermal:
         # Cosine transform
         image = np.cos(image * w + phase)
 
-        # Min-max normalization for the transformed image
-        image = (image - image.min()) / (image.max() - image.min()) * 255
+        # A constant image has no contrast; keep it zero instead of dividing by zero.
+        image = (image - image.min()) / max(image.max() - image.min(), 1e-8) * 255
 
         # 3 channel gray
         # image = cv2.cvtColor(image.astype(np.uint8), cv2.COLOR_GRAY2BGR)

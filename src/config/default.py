@@ -108,7 +108,6 @@ _CN.DATASET.TEST_INTRINSIC_PATH = None
 # general options
 _CN.DATASET.MIN_OVERLAP_SCORE_TRAIN = 0.4  # discard data with overlap_score < min_overlap_score
 _CN.DATASET.MIN_OVERLAP_SCORE_TEST = 0.0
-_CN.DATASET.AUGMENTATION_TYPE = None  # options: [None, 'dark', 'mobile']
 _CN.DATASET.MGDPT_IMG_RESIZE = None
 _CN.DATASET.MGDPT_IMG_PAD = True
 _CN.DATASET.MGDPT_DF = 8
@@ -117,75 +116,39 @@ _CN.DATASET.MGDPT_DF = 8
 _CN.TRAINER = CN()
 _CN.TRAINER.WORLD_SIZE = 1
 _CN.TRAINER.STAGE = 'pretrain'
-_CN.TRAINER.PRETRAIN_EPOCHS = 25
-_CN.TRAINER.FINETUNE_EPOCHS = 25  # upper limit; fine-tuning also monitors loss convergence
-_CN.TRAINER.PRETRAIN_LR = 5e-4
-_CN.TRAINER.FINETUNE_LR = 1.25e-4
+_CN.TRAINER.MAX_EPOCHS = 25
+_CN.TRAINER.BATCH_SIZE = 4
+_CN.TRAINER.NUM_WORKERS = 0
+_CN.TRAINER.DEVICES = 1
+_CN.TRAINER.NUM_NODES = 1
+_CN.TRAINER.ACCELERATOR = 'gpu'
+_CN.TRAINER.PRECISION = '32-true'
+_CN.TRAINER.ACCUMULATE_GRAD_BATCHES = 1
+_CN.TRAINER.EXP_NAME = None  # None selects repvit_dino, repvit, or repvgg from model settings
+_CN.TRAINER.RUN_NAME = 'run01'
+_CN.TRAINER.SAVE_EVERY_N_EPOCHS = 1
+_CN.TRAINER.SAVE_LAST = True  # latest pointer; numbered snapshots are retained
+_CN.TRAINER.LR = 5e-4
 _CN.TRAINER.WARMUP_EPOCHS = 5
-_CN.TRAINER.PRETRAIN_MILESTONES = [13, 17, 21, 23]
-_CN.TRAINER.FINETUNE_MILESTONES = [5, 8, 11, 13]
+_CN.TRAINER.MILESTONES = [13, 17, 21, 23]
+_CN.TRAINER.EARLY_STOP_ENABLED = False
 _CN.TRAINER.EARLY_STOP_PATIENCE = 5
 _CN.TRAINER.EARLY_STOP_MIN_DELTA = 1e-4
-_CN.TRAINER.CANONICAL_BS = 64
-_CN.TRAINER.CANONICAL_LR = 6e-3
-_CN.TRAINER.SCALING = None  # this will be calculated automatically
-_CN.TRAINER.FIND_LR = False  # use learning rate finder from pytorch-lightning
 
 # optimizer
 _CN.TRAINER.OPTIMIZER = "adamw"  # [adam, adamw]
-_CN.TRAINER.TRUE_LR = None  # this will be calculated automatically at runtime
 _CN.TRAINER.ADAM_DECAY = 0.  # ADAM: for adam
 _CN.TRAINER.ADAMW_DECAY = 0.1
 
-# step-based warm-up
-_CN.TRAINER.WARMUP_TYPE = 'linear'  # [linear, constant]
+# Linear warmup and multistep decay use actual optimizer steps per epoch.
 _CN.TRAINER.WARMUP_RATIO = 0.1
-_CN.TRAINER.WARMUP_STEP = 4800
-
-# learning rate scheduler
-_CN.TRAINER.SCHEDULER = 'MultiStepLR'  # [MultiStepLR, CosineAnnealing, ExponentialLR]
-_CN.TRAINER.SCHEDULER_INTERVAL = 'epoch'    # [epoch, step]
-_CN.TRAINER.MSLR_MILESTONES = [3, 6, 9, 12]  # MSLR: MultiStepLR
 _CN.TRAINER.MSLR_GAMMA = 0.5
-_CN.TRAINER.COSA_TMAX = 30  # COSA: CosineAnnealing
-_CN.TRAINER.ELR_GAMMA = 0.999992  # ELR: ExponentialLR, this value for 'step' interval
-
-# plotting related
-_CN.TRAINER.ENABLE_PLOTTING = True
-_CN.TRAINER.N_VAL_PAIRS_TO_PLOT = 32     # number of val/test paris for plotting
-_CN.TRAINER.PLOT_MODE = 'evaluation'  # ['evaluation', 'confidence']
-_CN.TRAINER.PLOT_MATCHES_ALPHA = 'dynamic'
-
-# geometric metrics and pose solver
-_CN.TRAINER.EPI_ERR_THR = 5e-4  # recommendation: 5e-4 for ScanNet, 1e-4 for MegaDepth (from SuperGlue)
-_CN.TRAINER.POSE_GEO_MODEL = 'E'  # ['E', 'F', 'H']
-_CN.TRAINER.POSE_ESTIMATION_METHOD = 'RANSAC'  # [RANSAC, DEGENSAC, MAGSAC]
-_CN.TRAINER.RANSAC_PIXEL_THR = 0.5
-_CN.TRAINER.RANSAC_CONF = 0.99999
-_CN.TRAINER.RANSAC_MAX_ITERS = 10000
-_CN.TRAINER.USE_MAGSACPP = False
-
-# data sampler for train_dataloader
-_CN.TRAINER.DATA_SAMPLER = 'scene_balance'  # options: ['scene_balance', 'random', 'normal']
-# 'scene_balance' config
-_CN.TRAINER.N_SAMPLES_PER_SUBSET = 200
-_CN.TRAINER.SB_SUBSET_SAMPLE_REPLACEMENT = True  # whether sample each scene with replacement or not
-_CN.TRAINER.SB_SUBSET_SHUFFLE = True  # after sampling from scenes, whether shuffle within the epoch or not
-_CN.TRAINER.SB_REPEAT = 1  # repeat N times for training the sampled data
-# 'random' config
-_CN.TRAINER.RDM_REPLACEMENT = True
-_CN.TRAINER.RDM_NUM_SAMPLES = None
 
 # gradient clipping
 _CN.TRAINER.GRADIENT_CLIPPING = 0.5
 
 # reproducibility
-# This seed affects the data sampling. With the same seed, the data sampling is promised
-# to be the same. When resume training from a checkpoint, it's better to use a different
-# seed, otherwise the sampled data will be exactly the same as before resuming, which will
-# cause less unique data items sampled during the entire training.
-# Use of different seed values might affect the final training result, since not all data items
-# are used during training on ScanNet. (60M pairs of images sampled during traing from 230M pairs in total.)
+# Keep the same seed when resuming; each epoch derives its own data-loader seed.
 _CN.TRAINER.SEED = 66
 
 

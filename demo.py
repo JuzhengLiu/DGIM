@@ -111,12 +111,12 @@ if __name__ == "__main__":
         height0, width0 = image0_gray.shape
         new_width0, new_height0 = map(lambda x: int(x * scale_ratio0 // 8 * 8), [width0, height0])
         image0_gray = cv2.resize(image0_gray, (new_width0, new_height0))
-        scale0 = np.array([width0 / new_width0, height0 / new_height0], dtype=np.float16)
+        scale0 = np.array([width0 / new_width0, height0 / new_height0], dtype=np.float32)
 
         height1, width1 = image1_gray.shape
         new_width1, new_height1 = map(lambda x: int(x * scale_ratio1 // 8 * 8), [width1, height1])
         image1_gray = cv2.resize(image1_gray, (new_width1, new_height1))
-        scale1 = np.array([width1 / new_width1, height1 / new_height1], dtype=np.float16)
+        scale1 = np.array([width1 / new_width1, height1 / new_height1], dtype=np.float32)
 
         image0 = torch.from_numpy(image0_gray)[None][None].cuda() / 255
         image1 = torch.from_numpy(image1_gray)[None][None].cuda() / 255
@@ -127,8 +127,8 @@ if __name__ == "__main__":
 
         with torch.no_grad():
             matcher(batch)
-            matched_points0 = batch["mkpts0_f"].cpu().numpy() * scale0
-            matched_points1 = batch["mkpts1_f"].cpu().numpy() * scale1
+            matched_points0 = batch["mkpts0_f"].float().cpu().numpy() * scale0
+            matched_points1 = batch["mkpts1_f"].float().cpu().numpy() * scale1
         torch.cuda.empty_cache()
 
         if len(matched_points0) >= 4:

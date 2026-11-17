@@ -1,0 +1,33 @@
+# 第二阶段：手动启动，只加载paths.finetune_init_checkpoint中的匹配器参数。
+# 优化器和本阶段学习率从头开始；同阶段断点续训使用finetune_resume_checkpoint。
+TRAINER:
+  STAGE: finetune
+  EXP_NAME: null
+  RUN_NAME: run01
+  MAX_EPOCHS: 25
+  BATCH_SIZE: 4
+  NUM_WORKERS: 0              # 动态风格生成器与训练模型使用同一设备，保持0
+  DEVICES: 1
+  NUM_NODES: 1
+  ACCELERATOR: gpu
+  PRECISION: '32-true'
+  ACCUMULATE_GRAD_BATCHES: 1
+  LR: 0.000125
+  OPTIMIZER: adamw
+  ADAMW_DECAY: 0.1
+  WARMUP_EPOCHS: 0
+  WARMUP_RATIO: 0.1
+  MILESTONES: [5, 8, 11, 13]
+  MSLR_GAMMA: 0.5
+  GRADIENT_CLIPPING: 0.5
+  SEED: 66
+  SAVE_EVERY_N_EPOCHS: 1       # 两阶段可独立设置，例如这里改成2
+  SAVE_LAST: true
+  EARLY_STOP_ENABLED: true
+  EARLY_STOP_PATIENCE: 5
+  EARLY_STOP_MIN_DELTA: 0.0001
+
+# 本阶段始终不计算教师损失。ENABLED只保留实验命名的来源标识，
+# 使用无教师基线时，两阶段都传--no-teacher或都将此项改为false。
+TEACHER:
+  ENABLED: true

@@ -1,6 +1,18 @@
 # DGIM：定制 RepViT 与训练期 DINOv3 引导
 
-基于 [LotrL/DGIM](https://github.com/LotrL/DGIM) 修改。当前版本 **v4**，修改记录见 [CHANGELOG.md](CHANGELOG.md)。本版本完成代码实现与静态审查，**尚未安装环境或运行缓存提取、训练、推理、测试、测速**；不代表已复现论文指标。
+基于 [LotrL/DGIM](https://github.com/LotrL/DGIM) 修改。当前版本 **v5**，修改记录见 [CHANGELOG.md](CHANGELOG.md)，本轮问题核查见 [静态审查记录](docs/AUDIT_v5.md)。**尚未安装环境或运行缓存提取、训练、推理、测试、测速**；不代表已复现论文指标。
+
+预训练与微调是**两次手动启动的独立训练**，前者结束后程序退出，不自动启动后者：
+
+```bash
+python train.py --stage pretrain
+```
+
+第一阶段结束，确认要加载的权重后，再运行：
+
+```bash
+python train.py --stage finetune
+```
 
 ## 当前模型
 
@@ -46,7 +58,7 @@ git switch main
 git pull --ff-only
 ```
 
-固定本次版本：`git fetch --tags`，然后`git switch --detach v4`。返回最新版用上面的三行。标签不覆盖，后续交付按v5、v6递增。
+固定本次版本：`git fetch --tags`，然后`git switch --detach v5`。返回最新版用上面的三行。标签不覆盖，后续交付按v6、v7递增。
 
 ## 路径和资源
 
@@ -63,7 +75,66 @@ paths:
 
 仓库保留原59张风格图、风格生成器`src/fast_neural_style/weights/epoch5.pth`、sample和assets。数据、DINO/RepViT/DGIM外部权重、新训练checkpoint、教师缓存和本机路径不上传。v3保存的M1.5权重在本版本不使用。
 
-模型与训练超参数继续集中在`configs/dgim_ds.py`和`src/config/default.py`；输入尺寸在`configs/multi_modality_512.py`。改变输入预处理、教师权重或教师源码后应使用新的缓存目录重新提取。
+模型设置在`configs/dgim_ds.py`，输入尺寸在`configs/multi_modality_512.py`；两个阶段的训练参数分别在下面的YML中。改变输入预处理、教师权重或教师源码后应使用新的缓存目录重新提取。
+
+## 两阶段配置与权重保存
+
+| 内容 | 配置文件/字段 |
+|---|---|
+| 预训练轮数、学习率、batch、保存频率、教师权重 | [configs/pretrain.yml](configs/pretrain.yml) |
+| 微调轮数、学习率、batch、保存频率、早停 | [configs/finetune.yml](configs/finetune.yml) |
+| 第二阶段加载哪个权重 | `paths.finetune_init_checkpoint` |
+| 第一阶段可选初始化权重 | `paths.pretrain_init_checkpoint`，默认null |
+| 同阶段断点续训 | `paths.pretrain_resume_checkpoint` / `paths.finetune_resume_checkpoint` |
+| 权重保存根目录 | `paths.checkpoint_dir` |
+| 新实验子目录 | 对应阶段YML中的`TRAINER.RUN_NAME` |
+
+两个阶段都可独立修改，例如：
+
+```yaml
+TRAINER:
+  RUN_NAME: run01
+  MAX_EPOCHS: 25
+  BATCH_SIZE: 4
+  LR: 0.000125
+  SAVE_EVERY_N_EPOCHS: 5
+  SAVE_LAST: true
+  EARLY_STOP_ENABLED: true
+  EARLY_STOP_PATIENCE: 5
+  EARLY_STOP_MIN_DELTA: 0.0001
+```
+
+`SAVE_EVERY_N_EPOCHS: 5`表示完成第5、10、15…轮保存；正常末轮或早停轮即使不满5轮也保存。保存发生在完整epoch结束时，不做中途batch恢复。进程被强制中断时，仅能从最近已保存的轮次恢复。`MAX_EPOCHS`是本阶段总轮数上限；恢复训练时它不是额外新增轮数。早停监控`train/epoch_loss_match`，不把逐轮变化的教师损失混入早停判断；设`EARLY_STOP_ENABLED: false`即可固定跑满指定轮数。
+
+默认保存位置：
+
+```text
+outputs/checkpoints/repvit_dino/
+├── pretrain/run01/
+│   ├── epoch=001-step=0001807.ckpt
+│   ├── epoch=002-step=0003614.ckpt
+│   └── last.ckpt
+└── finetune/run01/
+    ├── epoch=001-step=0001807.ckpt
+    └── last.ckpt
+```
+
+轮数从1开始；步数由实际数据量、batch和设备数决定，上面仅为本地BIT数据、单GPU、batch4、无梯度累积的示例。历史归档一直保留，同名冲突会加版本后缀。**只有`last.ckpt`是有意更新的最新副本**，且只在上述保存事件更新；`SAVE_LAST: false`时只保存历史归档。第二阶段可以加载`last.ckpt`，也可以指定任何某轮历史归档。
+
+新实验把`RUN_NAME`改为`run02`；如果已有checkpoint还用同一目录重新开始，程序会直接提示换名或显式resume，不覆盖旧实验。`--resume`继续写入所指定checkpoint的父目录。日志在`log_dir/实验名/阶段/运行名/version_*`，与权重路径分开；checkpoint内保存生效配置、初始化权重来源和运行目录。
+
+第二阶段选择某个第一阶段权重，在`configs/paths.local.yml`中设置：
+
+```yaml
+paths:
+  finetune_init_checkpoint: outputs/checkpoints/repvit_dino/pretrain/run01/epoch=010-step=0018070.ckpt
+```
+
+此处仅初始化匹配器，微调的优化器、学习率和轮数从本阶段重新开始。resume则恢复完整训练状态，并优先于YML中的init路径；不同时使用`--pretrained`和`--resume`。更改`checkpoint_dir`、实验名或`RUN_NAME`后，要同步选择实际的`finetune_init_checkpoint`和推理`matcher_checkpoint`，程序不猜测应该使用哪个实验。
+
+命令行只覆盖明确传入的值，如`--epochs 50 --save-every-n-epochs 2 --run-name run02`。可以通过`--config`选择另一份阶段YML，或在路径YML中修改`pretrain_config`/`finetune_config`；模型/数据配置先合并，阶段YML随后合并，CLI最后覆盖。
+
+从v4升级时，如果本机YML写过`pretrained_checkpoint`，请改名为`finetune_init_checkpoint`；`resume_checkpoint`改为对应阶段的`pretrain_resume_checkpoint`或`finetune_resume_checkpoint`。v4匹配器checkpoint可以通过init/`--pretrained`载入同结构新训练；v5的完整resume使用v5保存的训练元数据。不需要迁移本地教师缓存。
 
 ## 后续在服务器执行
 
@@ -82,7 +153,7 @@ pip install --no-deps -r requirements-augmentation.txt
 python prepare_teacher_cache.py
 ```
 
-它按训练集引用的去重原图提取干净灰度目标，保存FP16特征和有效mask，并写`manifest.yml`记录教师、预处理和完成状态。相同图片多次用于配对不会重复保存。缓存按数据根目录内的相对路径定位，便于迁移服务器。512输入下8030张图片的裸特征约25.26 GB，另有mask与文件元数据；实际图片数以数据集为准。
+它按训练集引用的去重原图提取干净灰度目标，保存FP16特征和有效mask，并写`manifest.yml`记录教师、预处理和完成状态。相同图片多次用于配对不会重复保存。缓存按数据根目录内的相对路径定位，便于迁移服务器。512输入下8030张图片的裸特征约25.26 GB，另有mask与文件元数据；实际图片数以数据集为准。这是使用教师路线的一次性独立准备命令，训练入口不会自动提取、下载或执行预检训练；无教师对照不需要这一步。
 
 ### 2. 预训练学生和匹配后端
 
@@ -92,7 +163,7 @@ python train.py --stage pretrain
 
 默认实验名`repvit_dino`，batch4，单GPU；从随机参数开始。预训练关闭动态风格和余弦增强，不加载风格生成器。学习率warmup按实际优化步数计算，不再写死每轮1798步。
 
-输出：`outputs/checkpoints/repvit_dino/pretrain/last.ckpt`。`configs/paths.yml`的`pretrained_checkpoint`默认指向这里，正常首次预训练不会自动加载这个路径。
+读取`configs/pretrain.yml`。默认输出：`outputs/checkpoints/repvit_dino/pretrain/run01/last.ckpt`。第一阶段结束即退出；`finetune_init_checkpoint`默认指向这里，供随后手动启动的第二阶段使用。
 
 ### 3. 微调
 
@@ -100,7 +171,7 @@ python train.py --stage pretrain
 python train.py --stage finetune
 ```
 
-读取`pretrained_checkpoint`中的同结构匹配器参数；恢复原随机风格/余弦强度增强，冻结生成器。默认`num_workers=0`，使原来的GPU风格生成器留在训练主进程，不复制到DataLoader子进程。输出：`outputs/checkpoints/repvit_dino/finetune/last.ckpt`。
+读取`configs/finetune.yml`和`finetune_init_checkpoint`中的同结构匹配器参数；恢复原随机风格/余弦强度增强，冻结生成器。默认`NUM_WORKERS: 0`，使风格生成器留在训练主进程，与训练模型使用同一设备。输出：`outputs/checkpoints/repvit_dino/finetune/run01/last.ckpt`。
 
 需要延长微调上限时用`--epochs 50`。早停耐心和阈值在配置中调整，不把训练loss收敛等同于验证集最优。
 
@@ -109,21 +180,21 @@ python train.py --stage finetune
 恢复同一阶段，保留优化器、学习率和步数：
 
 ```bash
-python train.py --stage pretrain --resume outputs/checkpoints/repvit_dino/pretrain/last.ckpt
+python train.py --stage pretrain --resume outputs/checkpoints/repvit_dino/pretrain/run01/last.ckpt
 ```
 
 只换骨干、不用教师：
 
 ```bash
 python train.py --stage pretrain --no-teacher
-python train.py --stage finetune --no-teacher --pretrained outputs/checkpoints/repvit/pretrain/last.ckpt
+python train.py --stage finetune --no-teacher --pretrained outputs/checkpoints/repvit/pretrain/run01/last.ckpt
 ```
 
 原RepVGG同条件基线：
 
 ```bash
 python train.py --stage pretrain --backbone repvgg --no-teacher
-python train.py --stage finetune --backbone repvgg --no-teacher --pretrained outputs/checkpoints/repvgg/pretrain/last.ckpt
+python train.py --stage finetune --backbone repvgg --no-teacher --pretrained outputs/checkpoints/repvgg/pretrain/run01/last.ckpt
 ```
 
 这些对照不需要教师缓存。已发布作者权重只能用于原RepVGG，不能作为定制学生的严格整网初始化。不要把恢复训练与微调阶段的模型参数初始化混用。
@@ -141,6 +212,7 @@ python demo.py --no-show
 - 离散细匹配选择继续不求导，亚像素MLP及训练坐标恢复梯度；不再原地改动用于fine loss的置信矩阵。重投影距离改用等价的vector_norm，避免零距离处sqrt导数问题。
 - 预训练/微调切换、实际步数warmup、checkpoint恢复和新旧骨干演示使用同一套明确接口。没有在线教师、自动下载、自动改模型或错误后退回另一条训练路径。
 - 复用原DGIM注意力、候选筛选和几何监督。原风格网络及其权重保持配套，不擅自改变其内部残差调用行为。
+- v5修复半精度粗匹配掩码溢出、BF16 RoPE类型、半精度亚像素坐标/OpenCV输入、空GT分支、padding监督、增强零分母和Pillow10接口，并删除失效通用增强配置与逐图CUDA缓存清空，详见[静态审查记录](docs/AUDIT_v5.md)。
 - 仅做源码交叉审查、Python语法和YML静态检查。未运行任何模型或测试，因此实际权重加载、融合数值等价、显存、训练稳定性、推理速度和准确率尚未实测。
 - 原仓库没有完整论文指标评测入口；demo的MAGSAC可视化不是定量复现。需要同条件比较原DGIM、新骨干无教师、新骨干加教师，才能判断实验收益。
 

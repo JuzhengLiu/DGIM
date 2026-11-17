@@ -18,7 +18,7 @@ DEFAULT_CONFIG = REPO_ROOT / "configs" / "paths.yml"
 LOCAL_CONFIG = REPO_ROOT / "configs" / "paths.local.yml"
 
 PATH_KEYS = frozenset({
-    "data_config", "model_config",
+    "data_config", "model_config", "pretrain_config", "finetune_config",
     "train_data_root", "train_pose_root", "train_npz_root",
     "train_list_path", "train_intrinsic_path",
     "val_data_root", "val_pose_root", "val_npz_root",
@@ -28,7 +28,9 @@ PATH_KEYS = frozenset({
     "style_dir", "style_checkpoint", "matcher_checkpoint",
     "repvit_source_dir", "repvit_checkpoint",
     "teacher_source_dir", "teacher_checkpoint", "teacher_cache_dir",
-    "pretrained_checkpoint", "resume_checkpoint", "log_dir", "checkpoint_dir", "sample_dir",
+    "pretrain_init_checkpoint", "finetune_init_checkpoint",
+    "pretrain_resume_checkpoint", "finetune_resume_checkpoint",
+    "log_dir", "checkpoint_dir", "sample_dir",
     "demo_output_dir",
 })
 

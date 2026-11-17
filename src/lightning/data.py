@@ -26,17 +26,13 @@ class MultiSceneDataModule(pl.LightningDataModule):
         self.teacher_stop_epoch = config.TEACHER.STOP_EPOCH
         self.train_dataset = None
         if self.stage == "finetune" and self.num_workers != 0:
-            raise ValueError("Finetuning uses the frozen CUDA style generator; --num-workers must be 0.")
+            raise ValueError("Finetuning keeps the frozen style generator in the training process; --num-workers must be 0.")
 
     def setup(self, stage=None):
         if stage not in (None, "fit"):
             raise ValueError("This DataModule implements training only (stage='fit').")
         if self.train_dataset is not None:
             return
-        augment_fn = None
-        if self.config.DATASET.AUGMENTATION_TYPE is not None:
-            from src.utils.augment import build_augmentor
-            augment_fn = build_augmentor(self.config.DATASET.AUGMENTATION_TYPE)
         # Do not open teacher caches during setup: the restored epoch is not
         # necessarily available yet. train_dataloader enables them when needed.
         self.train_dataset = MultiModality(
@@ -45,9 +41,9 @@ class MultiSceneDataModule(pl.LightningDataModule):
             img_resize=self.config.DATASET.MGDPT_IMG_RESIZE,
             df=self.config.DATASET.MGDPT_DF,
             img_padding=self.config.DATASET.MGDPT_IMG_PAD,
-            augment_fn=augment_fn,
             style_dir=self.project_paths["style_dir"],
             style_checkpoint=self.project_paths["style_checkpoint"],
+            style_device=self.trainer.strategy.root_device,
             coarse_scale=1 / self.config.DGIM.RESOLUTION[0],
             training_stage=self.stage,
             teacher_cache_dir=self.project_paths.get("teacher_cache_dir"),

@@ -110,7 +110,9 @@ class FineMatching(nn.Module):
         # sub-pixel refinement
         sub_ref = self.subpixel_mlp(torch.cat([feat_f0_unfold[b_ids, i_ids],
                                                feat_f1_unfold[b_ids, j_ids]], dim=-1))
-        sub_ref0, sub_ref1 = torch.chunk(sub_ref, 2, dim=-1)
+        # Pixel coordinates stay FP32 even when feature extraction uses FP16:
+        # adding a subpixel offset to a large half-precision index loses detail.
+        sub_ref0, sub_ref1 = torch.chunk(sub_ref.float(), 2, dim=-1)
         sub_ref0 = torch.tanh(sub_ref0) * 0.5
         sub_ref1 = torch.tanh(sub_ref1) * 0.5
 

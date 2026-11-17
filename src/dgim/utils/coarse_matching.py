@@ -93,8 +93,9 @@ class CoarseMatching(nn.Module):
         feat_c0, feat_c1 = map(lambda feat: feat / feat.shape[-1]**.5,
                                [feat_c0, feat_c1])
 
+        # Keep masking and softmax in FP32: -1e9 is not representable in FP16.
         sim_matrix = torch.einsum("nlc,nsc->nls", feat_c0,
-                                  feat_c1) / self.temperature
+                                  feat_c1).float() / self.temperature
         if mask_c0 is not None:
             sim_matrix.masked_fill_(
                 ~(mask_c0[..., None] * mask_c1[:, None]).bool(),

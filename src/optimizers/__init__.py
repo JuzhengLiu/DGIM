@@ -8,9 +8,7 @@ from torch.optim.lr_scheduler import LRScheduler
 
 def build_optimizer(model, config):
     name = config.TRAINER.OPTIMIZER.lower()
-    stage = config.TRAINER.STAGE
-    lr = (config.TRAINER.PRETRAIN_LR if stage == "pretrain"
-          else config.TRAINER.FINETUNE_LR)
+    lr = config.TRAINER.LR
     parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
     if name == "adam":
         return torch.optim.Adam(parameters, lr=lr, weight_decay=config.TRAINER.ADAM_DECAY)
@@ -67,13 +65,11 @@ class WarmupMultiStepLR(LRScheduler):
 
 
 def build_scheduler(config, optimizer):
-    pretraining = config.TRAINER.STAGE == "pretrain"
     scheduler = WarmupMultiStepLR(
         optimizer,
-        warmup_epochs=config.TRAINER.WARMUP_EPOCHS if pretraining else 0,
+        warmup_epochs=config.TRAINER.WARMUP_EPOCHS,
         warmup_ratio=config.TRAINER.WARMUP_RATIO,
-        milestones=(config.TRAINER.PRETRAIN_MILESTONES if pretraining
-                    else config.TRAINER.FINETUNE_MILESTONES),
+        milestones=config.TRAINER.MILESTONES,
         gamma=config.TRAINER.MSLR_GAMMA,
     )
     return {"scheduler": scheduler, "interval": "step", "frequency": 1,

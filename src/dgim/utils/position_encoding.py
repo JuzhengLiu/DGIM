@@ -44,8 +44,11 @@ class RoPEPositionEncodingSine(nn.Module):
         Args:
             x: [N, H, W, C]
         """
-        return (x * self.cos[:, :x.size(1), :x.size(2), :]) + (
-                    self.rotate_half(x) * self.sin[:, :x.size(1), :x.size(2), :])
+        # In BF16 autocast, mixing the stored FP16 buffers with BF16 would
+        # promote q/k to FP32 while attention values remain BF16.
+        cos = self.cos[:, :x.size(1), :x.size(2), :].to(dtype=x.dtype)
+        sin = self.sin[:, :x.size(1), :x.size(2), :].to(dtype=x.dtype)
+        return x * cos + self.rotate_half(x) * sin
 
     def rotate_half(self, x):
         x = x.unflatten(-1, (-1, 2))

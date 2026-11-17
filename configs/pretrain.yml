@@ -1,0 +1,34 @@
+# 第一阶段：只运行预训练；结束后不会自动启动微调。
+# 资源位置和权重路径统一放 paths.yml / paths.local.yml。
+TRAINER:
+  STAGE: pretrain
+  EXP_NAME: null              # 自动命名：repvit_dino；关闭教师后为 repvit
+  RUN_NAME: run01             # 新实验改为 run02，防止覆盖上一轮实验
+  MAX_EPOCHS: 25
+  BATCH_SIZE: 4               # 每张GPU的batch；修改batch不会自动缩放LR
+  NUM_WORKERS: 0
+  DEVICES: 1
+  NUM_NODES: 1
+  ACCELERATOR: gpu
+  PRECISION: '32-true'        # 可选 16-mixed / bf16-mixed
+  ACCUMULATE_GRAD_BATCHES: 1
+  LR: 0.0005
+  OPTIMIZER: adamw
+  ADAMW_DECAY: 0.1
+  WARMUP_EPOCHS: 5
+  WARMUP_RATIO: 0.1
+  MILESTONES: [13, 17, 21, 23]
+  MSLR_GAMMA: 0.5
+  GRADIENT_CLIPPING: 0.5
+  SEED: 66
+  SAVE_EVERY_N_EPOCHS: 1      # 每N轮保存一个历史checkpoint；末轮也会保存
+  SAVE_LAST: true            # 仅保存时更新last.ckpt，历史文件不会被它覆盖
+  EARLY_STOP_ENABLED: false
+  EARLY_STOP_PATIENCE: 5
+  EARLY_STOP_MIN_DELTA: 0.0001
+
+TEACHER:
+  ENABLED: true
+  WEIGHT: 0.05
+  RAMP_EPOCHS: 5
+  STOP_EPOCH: 10             # 0-based epoch=10起关闭，即第11轮起不读缓存
