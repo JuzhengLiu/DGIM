@@ -25,8 +25,8 @@ class DGIMLoss(nn.Module):
             }
             weight (torch.Tensor): (N, HW0, HW1)
         """
-        conf_matrix_0_to_1 = data["conf_matrix_0_to_1"]
-        conf_matrix_1_to_0 = data["conf_matrix_1_to_0"]
+        conf_matrix_0_to_1 = data["conf_matrix_0_to_1"].float()
+        conf_matrix_1_to_0 = data["conf_matrix_1_to_0"].float()
         conf_gt = data["conf_matrix_gt"]
 
         pos_mask = conf_gt == 1
@@ -58,7 +58,7 @@ class DGIMLoss(nn.Module):
             conf_matrix_f_gt (torch.Tensor): (N, W_f^2, W_f^2)
             }
         """
-        conf_matrix_fine = data['conf_matrix_fine']
+        conf_matrix_fine = data['conf_matrix_fine'].float()
         conf_matrix_f_gt = data['conf_matrix_f_gt']
         pos_mask, neg_mask = conf_matrix_f_gt > 0, conf_matrix_f_gt == 0
         pos_w, neg_w = self.pos_w, self.neg_w
@@ -89,11 +89,11 @@ class DGIMLoss(nn.Module):
             T_0to1 (torch.Tensor): (N, 3, 3)
             }
         """
-        kpts0_homo = torch.cat((kpts0, torch.ones(kpts0.shape[0], 1, device=kpts0.device)), dim=1).unsqueeze(2)  # (N, 3, 1)
+        kpts0_homo = torch.cat((kpts0, kpts0.new_ones(kpts0.shape[0], 1)), dim=1).unsqueeze(2)
         warped_kpts0_homo = torch.matmul(T_0to1, kpts0_homo)  # (N, 3, 1)
         warped_kpts0 = (warped_kpts0_homo[:, :2, :] / warped_kpts0_homo[:, 2:, :]).squeeze(2)  # (N, 2)
-        squared_diff = torch.square(warped_kpts0 - kpts1)  # (N, 2)
-        distances = torch.sqrt(torch.sum(squared_diff, dim=1))  # (N)
+        # vector_norm has a defined zero gradient at exact correspondence.
+        distances = torch.linalg.vector_norm(warped_kpts0 - kpts1, dim=1)
         return distances
 
     def compute_sub_pixel_loss(self, data):
@@ -111,12 +111,15 @@ class DGIMLoss(nn.Module):
         kpts1 = data['mkpts1_f_train']
         T_0to1 = data['T_0to1'][m_bids]
 
-        re_projection_error = self._compute_re_projection_error(kpts0, kpts1, T_0to1)
+        # Geometry stays in FP32 even when the matcher uses mixed precision.
+        with torch.autocast(device_type=kpts0.device.type, enabled=False):
+            re_projection_error = self._compute_re_projection_error(
+                kpts0.float(), kpts1.float(), T_0to1.float())
 
         # filter matches with high re-projection error (only train approximately correct fine-level matches)
         loss = re_projection_error[re_projection_error <= 5.0]  # default: 5.0
         if len(loss) == 0:
-            return torch.zeros(1, device=loss.device, requires_grad=False)[0]
+            return (kpts0.sum() + kpts1.sum()) * 0.0
         return loss.mean()
 
     @torch.no_grad()

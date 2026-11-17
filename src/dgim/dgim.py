@@ -9,11 +9,14 @@ from .utils.fine_matching import FineMatching
 
 
 def reparameter(matcher):
-    module = matcher.backbone.layer0
-    if hasattr(module, 'switch_to_deploy'):
-        module.switch_to_deploy()
-    for modules in [matcher.backbone.layer1, matcher.backbone.layer2, matcher.backbone.layer3]:
-        for module in modules:
+    """Convert an evaluation matcher to its inference convolution structure."""
+    if matcher.training:
+        raise RuntimeError('Call matcher.eval() before reparameter(matcher).')
+    if hasattr(matcher.backbone, 'switch_to_deploy'):
+        matcher.backbone.switch_to_deploy()
+    else:
+        # The legacy RepVGG wrapper exposes conversion on individual blocks.
+        for module in list(matcher.backbone.modules()):
             if hasattr(module, 'switch_to_deploy'):
                 module.switch_to_deploy()
     for modules in [matcher.fine_preprocess.layer2_outconv2, matcher.fine_preprocess.layer1_outconv2]:
@@ -36,7 +39,7 @@ class DGIM(nn.Module):
         self.fine_preprocess = FinePreprocess(config)
         self.fine_matching = FineMatching(config)
 
-    def forward(self, data):
+    def forward(self, data, return_backbone=False):
         """
         Update:
             data (dict): {
@@ -45,6 +48,8 @@ class DGIM(nn.Module):
                 'mask0'(optional) : (torch.Tensor): (N, H, W) '0' indicates a padded position
                 'mask1'(optional) : (torch.Tensor): (N, H, W)
             }
+        When return_backbone is True, backbone_c0/backbone_c1 retain the raw
+        pre-Transformer coarse features and their autograd graph for training.
         """
         # 1. Local Feature CNN
         data.update({
@@ -70,6 +75,12 @@ class DGIM(nn.Module):
                 'feats_x2_1': ret_dict1['feats_x2'],
                 'feats_x1_1': ret_dict1['feats_x1'],
             })
+
+        if return_backbone:
+            data.update({'backbone_c0': feat_c0, 'backbone_c1': feat_c1})
+        else:
+            data.pop('backbone_c0', None)
+            data.pop('backbone_c1', None)
 
         mul = self.config['resolution'][0] // self.config['resolution'][1]
         data.update({

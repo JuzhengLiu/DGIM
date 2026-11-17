@@ -1,19 +1,17 @@
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
-from torchvision import transforms
 import os
 import re
 import cv2
 import random
 import warnings
 import numpy as np
-import albumentations as A
 from pathlib import Path
 
 from src.config.paths import load_paths, resolve_path
-from src.fast_neural_style import utils
-from src.fast_neural_style.transfer_net import TransferNet
+from src.datasets.preprocessing import enumerate_training_pairs, prepare_gray_image, read_clean_gray
+from src.teacher.cache import TeacherCache
 
 warnings.filterwarnings("ignore")
 
@@ -28,6 +26,9 @@ class MultiModality(Dataset):
                  augment_fn=None,
                  style_dir=None,
                  style_checkpoint=None,
+                 training_stage='pretrain',
+                 teacher_cache_dir=None,
+                 teacher_enabled=False,
                  **kwargs):
         """
         Manage one scene(npz_path) of Multi-Modality dataset.
@@ -46,6 +47,9 @@ class MultiModality(Dataset):
         if not Path(self.root_dir).is_dir():
             raise FileNotFoundError(f'Training data directory not found: {self.root_dir}. Update paths.train_data_root.')
         self.mode = mode
+        if training_stage not in {'pretrain', 'finetune'}:
+            raise ValueError("training_stage must be 'pretrain' or 'finetune'.")
+        self.training_stage = training_stage
         self.dataset = []
         self.build_dataset()
 
@@ -58,39 +62,48 @@ class MultiModality(Dataset):
 
         # for training DGIM
         self.augment_fn = augment_fn if mode == 'train' else None
-        self.coarse_scale = getattr(kwargs, 'coarse_scale', 0.125)
+        self.coarse_scale = kwargs.get('coarse_scale', 0.125)
 
-        # build style path list and style model
-        paths = load_paths() if style_dir is None or style_checkpoint is None else None
-        self.style_folder_path = resolve_path(os.fspath(style_dir)) if style_dir is not None else paths['style_dir']
-        if not Path(self.style_folder_path).is_dir():
-            raise FileNotFoundError(f'Style directory not found: {self.style_folder_path}. Update paths.style_dir.')
-        self.style_path_list = self.build_style_path_list()
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.style_model_path = resolve_path(os.fspath(style_checkpoint)) if style_checkpoint is not None else paths['style_checkpoint']
-        if not Path(self.style_model_path).is_file():
-            raise FileNotFoundError(f'Style checkpoint not found: {self.style_model_path}. Update paths.style_checkpoint.')
-        self.style_model = self.build_style_model()
+        # Pretraining is clean and never constructs or loads the style generator.
+        self.style_model = None
+        if self.mode == 'train' and self.training_stage == 'finetune':
+            paths = load_paths() if style_dir is None or style_checkpoint is None else None
+            self.style_folder_path = resolve_path(os.fspath(style_dir)) if style_dir is not None else paths['style_dir']
+            if not Path(self.style_folder_path).is_dir():
+                raise FileNotFoundError(f'Style directory not found: {self.style_folder_path}. Update paths.style_dir.')
+            self.style_path_list = self.build_style_path_list()
+            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            self.style_model_path = resolve_path(os.fspath(style_checkpoint)) if style_checkpoint is not None else paths['style_checkpoint']
+            if not Path(self.style_model_path).is_file():
+                raise FileNotFoundError(f'Style checkpoint not found: {self.style_model_path}. Update paths.style_checkpoint.')
+            self.style_model = self.build_style_model()
+
+        self.teacher_cache_dir = resolve_path(os.fspath(teacher_cache_dir)) if teacher_cache_dir is not None else None
+        self.teacher_cache = None
+        self.teacher_enabled = teacher_enabled
 
     def build_dataset(self):
-        # multi-modal dataset
-        scenes = sorted(os.listdir(self.root_dir))
-        for scene in scenes:
-            scene_path = os.path.join(self.root_dir, scene)
-            scene_pairs = sorted(os.listdir(scene_path))
-            for scene_pair in scene_pairs:
-                scene_pair_path = os.path.join(scene_path, scene_pair)
-                folders = sorted(os.listdir(scene_pair_path))
-                for folder in folders:
-                    folder_path = os.path.join(scene_pair_path, folder)
-                    files = sorted(os.listdir(folder_path))
-                    for i in range(3, len(files)):  # pass the first pair
-                        if i % 2 == 1:
-                            self.dataset.append({"image0_path": os.path.join(folder_path, files[0]),
-                                                 "image1_path": os.path.join(folder_path, files[i]),
-                                                 "affine_matrix_path": os.path.join(folder_path, files[i + 1])})
-        np.random.seed(42)
-        np.random.shuffle(self.dataset)
+        self.dataset = enumerate_training_pairs(self.root_dir)
+
+    @property
+    def teacher_enabled(self):
+        return self._teacher_enabled
+
+    @teacher_enabled.setter
+    def teacher_enabled(self, enabled):
+        if enabled:
+            if self.training_stage != 'pretrain' or self.mode != 'train':
+                raise ValueError('Clean teacher targets are only used during pretraining.')
+            if self.teacher_cache_dir is None:
+                raise ValueError('teacher_cache_dir is required when teacher supervision is enabled.')
+            if self.teacher_cache is None:
+                self.teacher_cache = TeacherCache(
+                    self.teacher_cache_dir, self.root_dir, self.img_resize, self.df, self.img_padding)
+        self._teacher_enabled = bool(enabled)
+
+    def set_teacher_enabled(self, enabled):
+        """Call before creating each epoch's DataLoader and worker processes."""
+        self.teacher_enabled = enabled
 
     def __len__(self):
         return len(self.dataset)
@@ -98,23 +111,13 @@ class MultiModality(Dataset):
     def __getitem__(self, idx):
         item = self.dataset[idx]
 
-        # TODO: Support augmentation & handle seeds for each worker correctly.
-
-        # ----- pretrain -----
-        # stylizing_option0, stylizing_option1 = False, False
-
-        # thermal_option0, thermal_option1 = False, False
-
-        # ----- finetune -----
-        if random.choice([0, 1]) == 0:
-            stylizing_option0, stylizing_option1 = True, False
-        else:
-            stylizing_option0, stylizing_option1 = False, True
-
-        if random.choice([0, 1]) == 0:
-            thermal_option0, thermal_option1 = True, False
-        else:
-            thermal_option0, thermal_option1 = False, True
+        stylizing_option0 = stylizing_option1 = False
+        thermal_option0 = thermal_option1 = False
+        if self.mode == 'train' and self.training_stage == 'finetune':
+            stylizing_option0 = random.choice([0, 1]) == 0
+            stylizing_option1 = not stylizing_option0
+            thermal_option0 = random.choice([0, 1]) == 0
+            thermal_option1 = not thermal_option0
 
         # noinspection PyTypeChecker
         image0, mask0, scale0 = self.read_megadepth_gray(
@@ -144,12 +147,17 @@ class MultiModality(Dataset):
 
         # for DGIM training
         if mask0 is not None:  # img_padding is True
-            if self.coarse_scale:
-                [ts_mask_0, ts_mask_1] = F.interpolate(torch.stack([mask0, mask1], dim=0)[None].float(),
-                                                       scale_factor=self.coarse_scale,
-                                                       mode='nearest',
-                                                       recompute_scale_factor=False)[0].bool()
+            [ts_mask_0, ts_mask_1] = F.interpolate(torch.stack([mask0, mask1], dim=0)[None].float(),
+                                                   scale_factor=self.coarse_scale,
+                                                   mode='nearest',
+                                                   recompute_scale_factor=False)[0].bool()
             data.update({'mask0': ts_mask_0, 'mask1': ts_mask_1})
+
+        if self.teacher_enabled:
+            for suffix, image, image_mask in (('0', image0, mask0), ('1', image1, mask1)):
+                feature, valid = self.teacher_cache.load(item[f'image{suffix}_path'], image, image_mask)
+                data[f'teacher_feature{suffix}'] = feature
+                data[f'teacher_mask{suffix}'] = valid
 
         return data
 
@@ -162,6 +170,8 @@ class MultiModality(Dataset):
         return style_path_list
 
     def build_style_model(self):
+        from src.fast_neural_style.transfer_net import TransferNet
+
         style_model = TransferNet()
         state_dict = torch.load(self.style_model_path, map_location='cpu')
         # remove saved deprecated running_* keys in InstanceNorm from the checkpoint
@@ -176,6 +186,9 @@ class MultiModality(Dataset):
         return style_model
 
     def stylize(self, content_path, style_path):
+        from torchvision import transforms
+        from src.fast_neural_style import utils
+
         transform = transforms.Compose([
             transforms.ToTensor(),
             transforms.Lambda(lambda x: x.mul(255))
@@ -211,6 +224,8 @@ class MultiModality(Dataset):
             image = self.stylize(path, random.choice(self.style_path_list))
         else:
             image = cv2.imread(path)
+            if image is None:
+                raise FileNotFoundError(f'Cannot read image: {path}')
 
         if thermal_option:
             thermal_transform = BGRtoThermal()
@@ -231,65 +246,17 @@ class MultiModality(Dataset):
             mask (torch.tensor): (h, w)
             scale (torch.tensor): [w/w_new, h/h_new]
         """
-        # read image
+        if not stylizing_option and not thermal_option:
+            return read_clean_gray(path, resize, df, padding)
         image = self.imread_gray(path, stylizing_option, thermal_option)
-
-        # resize image
-        w, h = image.shape[1], image.shape[0]
-        w_new, h_new = self.get_resized_wh(w, h, resize)
-        w_new, h_new = self.get_divisible_wh(w_new, h_new, df)
-
-        image = cv2.resize(image, (w_new, h_new))
-        scale = torch.tensor([w / w_new, h / h_new], dtype=torch.float)
-
-        if padding:  # padding
-            pad_to = max(h_new, w_new)
-            image, mask = self.pad_bottom_right(image, pad_to, ret_mask=True)
-        else:
-            mask = None
-
-        image = torch.from_numpy(image).float()[None] / 255  # (h, w) -> (1, h, w) and normalized
-        mask = torch.from_numpy(mask)
-
-        return image, mask, scale
-
-    def get_resized_wh(self, w, h, resize=None):
-        if resize is not None:  # resize the longer edge
-            scale = resize / max(h, w)
-            w_new, h_new = int(round(w * scale)), int(round(h * scale))
-        else:
-            w_new, h_new = w, h
-        return w_new, h_new
-
-    def get_divisible_wh(self, w, h, df=None):
-        if df is not None:
-            w_new, h_new = map(lambda x: int(x // df * df), [w, h])
-        else:
-            w_new, h_new = w, h
-        return w_new, h_new
-
-    def pad_bottom_right(self, inp, pad_size, ret_mask=False):
-        assert isinstance(pad_size, int) and pad_size >= max(inp.shape[-2:]), f"{pad_size} < {max(inp.shape[-2:])}"
-        mask = None
-        if inp.ndim == 2:
-            padded = np.zeros((pad_size, pad_size), dtype=inp.dtype)
-            padded[:inp.shape[0], :inp.shape[1]] = inp
-            if ret_mask:
-                mask = np.zeros((pad_size, pad_size), dtype=bool)
-                mask[:inp.shape[0], :inp.shape[1]] = True
-        elif inp.ndim == 3:
-            padded = np.zeros((inp.shape[0], pad_size, pad_size), dtype=inp.dtype)
-            padded[:, :inp.shape[1], :inp.shape[2]] = inp
-            if ret_mask:
-                mask = np.zeros((inp.shape[0], pad_size, pad_size), dtype=bool)
-                mask[:, :inp.shape[1], :inp.shape[2]] = True
-        else:
-            raise NotImplementedError()
-        return padded, mask
+        return prepare_gray_image(image, resize, df, padding)
 
 
 class BGRtoThermal:
     def __init__(self):
+        os.environ.setdefault('NO_ALBUMENTATIONS_UPDATE', '1')
+        import albumentations as A
+
         self.blur = A.Blur(p=0.7, blur_limit=(3, 5))  # default: blur_limit=(2, 4)
         self.hsv = A.HueSaturationValue(p=0.9, val_shift_limit=(-30, +30), hue_shift_limit=(-90, +90),
                                         sat_shift_limit=(-30, +30))

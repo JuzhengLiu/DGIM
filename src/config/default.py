@@ -3,7 +3,7 @@ _CN = CN()
 
 ##############  ↓  DGIM Pipeline  ↓  ##############
 _CN.DGIM = CN()
-_CN.DGIM.BACKBONE_TYPE = 'RepVGG'
+_CN.DGIM.BACKBONE_TYPE = 'RepViT'
 _CN.DGIM.ALIGN_CORNER = False
 _CN.DGIM.RESOLUTION = (8, 2)
 
@@ -73,6 +73,14 @@ _CN.DGIM.LOSS.FINE_CORRECT_THR = 1.0  # for filtering valid fine-level gts (some
 # -- # sub-pixel
 _CN.DGIM.LOSS.SUB_WEIGHT = 0.1  # default: 0.1
 
+# Frozen DINOv3 targets are prepared offline; no teacher model is loaded by train.py.
+_CN.TEACHER = CN()
+_CN.TEACHER.ENABLED = True
+_CN.TEACHER.DIM = 384
+_CN.TEACHER.WEIGHT = 0.05  # initial experiment setting, not a measured optimum
+_CN.TEACHER.RAMP_EPOCHS = 5
+_CN.TEACHER.STOP_EPOCH = 10  # zero-based epoch 10: no teacher loss or cache reads
+
 ##############  Dataset  ##############
 _CN.DATASET = CN()
 # 1. data config
@@ -108,6 +116,16 @@ _CN.DATASET.MGDPT_DF = 8
 ##############  Trainer  ##############
 _CN.TRAINER = CN()
 _CN.TRAINER.WORLD_SIZE = 1
+_CN.TRAINER.STAGE = 'pretrain'
+_CN.TRAINER.PRETRAIN_EPOCHS = 25
+_CN.TRAINER.FINETUNE_EPOCHS = 25  # upper limit; fine-tuning also monitors loss convergence
+_CN.TRAINER.PRETRAIN_LR = 5e-4
+_CN.TRAINER.FINETUNE_LR = 1.25e-4
+_CN.TRAINER.WARMUP_EPOCHS = 5
+_CN.TRAINER.PRETRAIN_MILESTONES = [13, 17, 21, 23]
+_CN.TRAINER.FINETUNE_MILESTONES = [5, 8, 11, 13]
+_CN.TRAINER.EARLY_STOP_PATIENCE = 5
+_CN.TRAINER.EARLY_STOP_MIN_DELTA = 1e-4
 _CN.TRAINER.CANONICAL_BS = 64
 _CN.TRAINER.CANONICAL_LR = 6e-3
 _CN.TRAINER.SCALING = None  # this will be calculated automatically
@@ -121,7 +139,7 @@ _CN.TRAINER.ADAMW_DECAY = 0.1
 
 # step-based warm-up
 _CN.TRAINER.WARMUP_TYPE = 'linear'  # [linear, constant]
-_CN.TRAINER.WARMUP_RATIO = 0.
+_CN.TRAINER.WARMUP_RATIO = 0.1
 _CN.TRAINER.WARMUP_STEP = 4800
 
 # learning rate scheduler

@@ -53,7 +53,6 @@ class FineMatching(nn.Module):
         # predict fine-level and sub-pixel matches from conf_matrix
         data.update(**self.get_fine_match(conf_matrix_fine, feat_f0_unfold, feat_f1_unfold, data))
 
-    @torch.no_grad()
     def get_fine_match(self, conf_matrix_fine, feat_f0_unfold, feat_f1_unfold, data):
         """
         Args:
@@ -70,26 +69,9 @@ class FineMatching(nn.Module):
         """
         W_f = self.W_f
 
-        # 1. confidence thresholding
-        mask = conf_matrix_fine > self.fine_thr
-
-        if mask.sum() == 0:
-            mask[0, 0, 0] = 1
-            conf_matrix_fine[0, 0, 0] = 1
-
-        # 2. match only the highest confidence
-        mask = mask * (conf_matrix_fine == conf_matrix_fine.amax(dim=[1, 2], keepdim=True))
-
-        # 2. mutual nearest, match all features in fine window
-        # mask = mask * (conf_matrix_fine == conf_matrix_fine.max(dim=2, keepdim=True)[0]) \
-        #             * (conf_matrix_fine == conf_matrix_fine.max(dim=1, keepdim=True)[0])
-
-        # 3. find all valid fine matches
-        # this only works when at most one `True` in each row
-        mask_v, all_j_ids = mask.max(dim=2)
-        b_ids, i_ids = torch.where(mask_v)
-        j_ids = all_j_ids[b_ids, i_ids]
-        mconf = conf_matrix_fine[b_ids, i_ids, j_ids]
+        # Only the discrete selection is detached. The selected feature vectors
+        # below must retain gradients for the subpixel MLP and its input features.
+        b_ids, i_ids, j_ids, mconf = self._select_matches(conf_matrix_fine)
 
         # 4. update with matches in original image resolution
 
@@ -140,7 +122,7 @@ class FineMatching(nn.Module):
 
         # These matches are the current prediction (for visualization)
         fine_matches = {
-            'm_bids': b_ids_c[b_ids[mconf != 0]],  # mconf == 0 => gt matches
+            'm_bids': b_ids_c[b_ids[mconf != 0]],
             'mkpts0_f': mkpts0_f[mconf != 0],
             'mkpts1_f': mkpts1_f[mconf != 0],
             'mconf_f': mconf[mconf != 0],
@@ -149,3 +131,18 @@ class FineMatching(nn.Module):
         }
 
         return fine_matches
+
+    @torch.no_grad()
+    def _select_matches(self, conf_matrix_fine):
+        confidence = conf_matrix_fine.detach()
+        mask = confidence > self.fine_thr
+        if not mask.any():
+            # Preserve the legacy fallback candidate without changing the
+            # confidence matrix used by the differentiable fine matching loss.
+            index = torch.zeros(1, dtype=torch.long, device=confidence.device)
+            return index, index, index, confidence.new_ones(1)
+        mask = mask & (confidence == confidence.amax(dim=[1, 2], keepdim=True))
+        mask_v, all_j_ids = mask.max(dim=2)
+        b_ids, i_ids = torch.where(mask_v)
+        j_ids = all_j_ids[b_ids, i_ids]
+        return b_ids, i_ids, j_ids, confidence[b_ids, i_ids, j_ids]

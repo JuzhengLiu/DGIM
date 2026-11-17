@@ -8,7 +8,7 @@ import numpy as np
 from tqdm import tqdm
 
 from src.config.paths import load_paths, resolve_path
-from src.dgim import DGIM, default_cfg, reparameter
+from src.utils.checkpoint import load_matcher
 
 warnings.filterwarnings("ignore")
 
@@ -87,21 +87,9 @@ if __name__ == "__main__":
         matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    # If matching is difficult, you can try lowering the threshold.
-    config = default_cfg
-    config["match_coarse"]["thr"] = 0.3  # default: 0.3
-    config["match_coarse"]["border_rm"] = 2  # default: 2
-    config["fine"]["thr"] = 0.1  # default: 0.1
-
     half_precision = True  # default: False
-
-    matcher = DGIM(config=config)
-    # If image sizes are too small, such as smaller than 384×384, use dgim_256.ckpt; otherwise, use dgim_512.ckpt.
-    matcher.load_state_dict(torch.load(str(checkpoint_path), map_location="cpu")["state_dict"])
-    matcher = reparameter(matcher)
-    matcher = matcher.eval().cuda()
-    if half_precision:
-        matcher = matcher.half()
+    # v4 checkpoints carry their architecture; original author checkpoints use RepVGG.
+    matcher = load_matcher(checkpoint_path, device='cuda', half=half_precision)
 
     # If matching is difficult, the input images can be resized proportionally,
     # and the output matches will be automatically resized back.

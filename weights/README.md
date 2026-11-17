@@ -1,11 +1,18 @@
-This directory is the default location for the DGIM matching checkpoint.
+# Local weights
 
-Obtain `dgim_512.ckpt` or `dgim_256.ckpt` from the authors' links in the root README. These matching checkpoints are not bundled. If stored elsewhere, set `matcher_checkpoint` in `configs/paths.local.yml`.
+All weights in this directory stay local and are excluded from Git. Paths are
+managed in `configs/paths.yml`, with machine overrides in `paths.local.yml`.
 
-The bundled `src/fast_neural_style/weights/epoch5.pth` belongs to the training-time style generator and cannot substitute for the matching checkpoint.
+| Resource | Use in v4 |
+|---|---|
+| `dinov3_convnext_large_pretrain_lvd1689m-61fa432d.pth` | Required only for offline teacher-cache preparation; obtain the official backbone state dictionary through https://github.com/facebookresearch/dinov3 |
+| Original `dgim_512.ckpt` / `dgim_256.ckpt` | Optional author-baseline inference; incompatible with the custom RepViT backbone |
+| `repvit_m1_5_distill_450e.pth` | v3 local reference resource only; **not loaded** by the v4 student |
 
-RepViT-M1.5 resource preparation (v3): `repvit_m1_5_distill_450e.pth` is the official ImageNet-1K classification checkpoint from THU-MIG/RepViT, trained for 450 epochs with distillation (reported Top-1: 82.5%). It is not a trained DGIM matcher or a DINOv3 checkpoint. It is stored locally only; upload it separately to your server, or obtain it from the upstream release:
+The new student and matching backend start from random initialization. After
+training, v4 checkpoints are written under `outputs/checkpoints/` and include
+the backbone type/configuration. A teacher checkpoint is not a matching model.
 
-https://github.com/THU-MIG/RepViT/releases/download/v1.0/repvit_m1_5_distill_450e.pth
-
-Set `repvit_checkpoint` in `configs/paths.local.yml` if you use a different location. All files under this weights directory except this README are ignored by Git. Source and checkpoint provenance are recorded in `third_party/repvit/SOURCE.yml`.
+The already bundled `src/fast_neural_style/weights/epoch5.pth` is the frozen
+style generator used during fine-tuning; it remains tracked as in the original
+repository. DINOv3 source and license information is in `third_party/dinov3/`.

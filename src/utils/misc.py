@@ -2,7 +2,7 @@ import os
 import contextlib
 import joblib
 from typing import Union
-from loguru import _Logger, logger
+from loguru import logger
 from itertools import chain
 
 import torch
@@ -28,7 +28,7 @@ def log_on(condition, message, level):
         logger.log(level, message)
 
 
-def get_rank_zero_only_logger(logger: _Logger):
+def get_rank_zero_only_logger(logger):
     if rank_zero_only.rank == 0:
         return logger
     else:

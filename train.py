@@ -1,163 +1,200 @@
-import torch.multiprocessing as mp
-import argparse
-import pprint
-from distutils.util import strtobool
-from pathlib import Path
-from loguru import logger as loguru_logger
-import os
+"""Train DGIM in explicit pretrain/finetune stages with Lightning 2.2."""
 
+import argparse
+from pathlib import Path
+
+from loguru import logger
 import pytorch_lightning as pl
-from pytorch_lightning.utilities import rank_zero_only
+from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
-from pytorch_lightning.plugins import DDPPlugin
+from pytorch_lightning.strategies import DDPStrategy
 
 from src.config.default import get_cfg_defaults
 from src.config.paths import load_paths, resolve_path
-from src.utils.misc import get_rank_zero_only_logger, setup_gpus
-from src.utils.profiler import build_profiler
 from src.lightning.data import MultiSceneDataModule
 from src.lightning.lightning_dgim import PL_DGIM
-
-loguru_logger = get_rank_zero_only_logger(loguru_logger)
-
-os.environ["PL_TORCH_DISTRIBUTED_BACKEND"] = "gloo"
-os.environ["NO_ALBUMENTATIONS_UPDATE"] = "1"
+from src.losses.teacher_loss import teacher_weight
 
 
 def parse_args():
-    # init a costum parser which will be added into pl.Trainer parser
-    # check documentation: https://pytorch-lightning.readthedocs.io/en/latest/common/trainer.html#trainer-flags
-    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument(
-        '--paths', dest='paths_config', type=str, default=None,
-        help='YML path overrides; default: configs/paths.yml plus optional paths.local.yml')
-    parser.add_argument(
-        '--data_cfg_path', type=str, default=None,
-        help='override paths.data_config (relative to the repository root)')
-    parser.add_argument(
-        '--main_cfg_path', type=str, default=None,
-        help='override paths.model_config (relative to the repository root)')
-    parser.add_argument(
-        '--exp_name', type=str, default='DGIM')
-    parser.add_argument(
-        '--batch_size', type=int, default=4, help='batch_size per gpu')
-    parser.add_argument(
-        '--num_workers', type=int, default=4)
-    parser.add_argument(
-        '--pin_memory', type=lambda x: bool(strtobool(x)),
-        nargs='?', default=True, help='whether loading data to pinned memory or not')
-    parser.add_argument(
-        '--ckpt_path', type=str, default=None,
-        help='pretrained checkpoint path, helpful for using a pre-trained coarse-only DGIM')
-    parser.add_argument(
-        '--disable_ckpt', action='store_true',
-        help='disable checkpoint saving (useful for debugging).')
-    parser.add_argument(
-        '--profiler_name', type=str, default=None,
-        help='options: [inference, pytorch], or leave it unset')
-    parser.add_argument(
-        '--parallel_load_data', action='store_true',
-        help='load datasets in with multiple processes.')
-
-    parser = pl.Trainer.add_argparse_args(parser)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser.add_argument("--stage", choices=("pretrain", "finetune"), default=None,
+                        help="training stage; otherwise use TRAINER.STAGE")
+    parser.add_argument("--backbone", choices=("repvit", "repvgg"), default=None,
+                        help="backbone; otherwise use the model configuration")
+    parser.add_argument("--no-teacher", action="store_true", help="disable cached teacher supervision")
+    parser.add_argument("--paths", dest="paths_config", default=None,
+                        help="path configuration overlay")
+    parser.add_argument("--model-config", "--main_cfg_path", dest="main_cfg_path", default=None)
+    parser.add_argument("--data-config", "--data_cfg_path", dest="data_cfg_path", default=None)
+    parser.add_argument("--exp-name", "--exp_name", dest="exp_name", default=None)
+    parser.add_argument("--batch-size", "--batch_size", dest="batch_size", type=int, default=4,
+                        help="batch size per device; stage learning rates are not auto-scaled")
+    parser.add_argument("--num-workers", "--num_workers", dest="num_workers", type=int, default=0,
+                        help="finetuning requires 0 because style generation uses CUDA")
+    parser.add_argument("--epochs", type=int, default=None, help="override this stage's maximum epochs")
+    parser.add_argument("--devices", type=int, default=1, help="number of devices per node")
+    parser.add_argument("--num-nodes", type=int, default=1)
+    parser.add_argument("--accelerator", choices=("gpu", "cpu", "auto"), default="gpu")
+    parser.add_argument("--precision", choices=("32-true", "16-mixed", "bf16-mixed"), default="32-true")
+    parser.add_argument("--accumulate-grad-batches", type=int, default=1)
+    parser.add_argument("--pretrained", "--ckpt_path", dest="pretrained", default=None,
+                        help="initialize matcher only; finetune defaults to paths.pretrained_checkpoint")
+    parser.add_argument("--resume", "--resume_from_checkpoint", dest="resume", default=None,
+                        help="resume model, optimizer, schedule and training loop")
+    parser.add_argument("--disable-checkpoint", "--disable_ckpt", dest="disable_ckpt", action="store_true")
     return parser.parse_args()
 
 
-def main():
-    # parse arguments
-    args = parse_args()
-    paths = load_paths(args.paths_config)
-    args.data_cfg_path = resolve_path(args.data_cfg_path) if args.data_cfg_path else paths['data_config']
-    args.main_cfg_path = resolve_path(args.main_cfg_path) if args.main_cfg_path else paths['model_config']
-    args.ckpt_path = resolve_path(args.ckpt_path) if args.ckpt_path else paths['pretrained_checkpoint']
-    args.project_paths = paths
-    args.default_root_dir = paths['log_dir']
-    if getattr(args, 'resume_from_checkpoint', None):
-        args.resume_from_checkpoint = resolve_path(args.resume_from_checkpoint)
-    else:
-        args.resume_from_checkpoint = paths['resume_checkpoint']
-    for label, filename in [('data_config', args.data_cfg_path), ('model_config', args.main_cfg_path),
-                            ('pretrained_checkpoint', args.ckpt_path),
-                            ('resume_checkpoint', args.resume_from_checkpoint)]:
-        if filename is not None and not Path(filename).is_file():
-            raise FileNotFoundError(f'{label} not found: {filename}. Update the path configuration or CLI override.')
-    args.gpus = -1
-    rank_zero_only(pprint.pprint)(vars(args))
+def _existing_file(label, filename):
+    if filename is None or not Path(filename).is_file():
+        raise FileNotFoundError(
+            f"{label} not found: {filename}. Set the corresponding path configuration or CLI override."
+        )
 
-    # init default-cfg and merge it with the main- and data-cfg
+
+def prepare_configuration(args):
+    paths = load_paths(args.paths_config)
+    args.project_paths = paths
+    args.main_cfg_path = resolve_path(args.main_cfg_path) if args.main_cfg_path else paths["model_config"]
+    args.data_cfg_path = resolve_path(args.data_cfg_path) if args.data_cfg_path else paths["data_config"]
+    _existing_file("model_config", args.main_cfg_path)
+    _existing_file("data_config", args.data_cfg_path)
     config = get_cfg_defaults()
     config.merge_from_file(args.main_cfg_path)
     config.merge_from_file(args.data_cfg_path)
-    # Filesystem locations have one source of truth, independent of model settings.
-    for split in ('train', 'val', 'test'):
-        for suffix in ('data_root', 'pose_root', 'npz_root', 'list_path', 'intrinsic_path'):
-            key = f'{split}_{suffix}'
+    for split in ("train", "val", "test"):
+        for suffix in ("data_root", "pose_root", "npz_root", "list_path", "intrinsic_path"):
+            key = f"{split}_{suffix}"
             setattr(config.DATASET, key.upper(), paths[key])
-    pl.seed_everything(config.TRAINER.SEED)  # reproducibility
-    # TODO: Use different seeds for each dataloader workers
-    # This is needed for data augmentation
+    if args.stage is not None:
+        config.TRAINER.STAGE = args.stage
+    args.stage = config.TRAINER.STAGE
+    if args.stage not in ("pretrain", "finetune"):
+        raise ValueError("TRAINER.STAGE must be pretrain or finetune.")
+    if args.backbone is not None:
+        config.DGIM.BACKBONE_TYPE = {"repvit": "RepViT", "repvgg": "RepVGG"}[args.backbone]
+    if config.DGIM.BACKBONE_TYPE not in ("RepViT", "RepVGG"):
+        raise ValueError("DGIM.BACKBONE_TYPE must be RepViT or RepVGG.")
+    args.backbone = config.DGIM.BACKBONE_TYPE.lower()
+    if args.no_teacher:
+        config.TEACHER.ENABLED = False
+    if args.exp_name is None:
+        # Keep the same experiment directory in finetuning even though the
+        # teacher is only active during pretraining.
+        use_teacher_name = config.TEACHER.ENABLED and config.TEACHER.WEIGHT > 0
+        args.exp_name = args.backbone + ("_dino" if use_teacher_name else "")
+    if not args.exp_name or args.exp_name in (".", "..") or any(
+        character in args.exp_name for character in ("/", "\\")
+    ):
+        raise ValueError("--exp-name must be a single nonempty directory name.")
+    if min(args.batch_size, args.devices, args.num_nodes, args.accumulate_grad_batches) < 1:
+        raise ValueError("Batch size, devices, nodes and gradient accumulation must be positive.")
+    if args.num_workers < 0:
+        raise ValueError("--num-workers cannot be negative.")
+    if args.stage == "finetune" and args.num_workers != 0:
+        raise ValueError("Finetuning requires --num-workers 0 for the frozen style generator.")
+    epoch_key = "PRETRAIN_EPOCHS" if args.stage == "pretrain" else "FINETUNE_EPOCHS"
+    if args.epochs is not None:
+        setattr(config.TRAINER, epoch_key, args.epochs)
+    args.epochs = getattr(config.TRAINER, epoch_key)
+    if args.epochs < 1:
+        raise ValueError("--epochs must be positive.")
+    config.TRAINER.WORLD_SIZE = args.devices * args.num_nodes
+    config.TRAINER.TRUE_LR = (
+        config.TRAINER.PRETRAIN_LR if args.stage == "pretrain" else config.TRAINER.FINETUNE_LR
+    )
+    if config.TRAINER.TRUE_LR <= 0:
+        raise ValueError("The stage learning rate must be positive.")
+    teacher_weight(
+        0, enabled=(args.stage == "pretrain" and config.TEACHER.ENABLED),
+        weight=config.TEACHER.WEIGHT, ramp_epochs=config.TEACHER.RAMP_EPOCHS,
+        stop_epoch=config.TEACHER.STOP_EPOCH,
+    )
+    args.resume_checkpoint = resolve_path(args.resume) if args.resume else paths["resume_checkpoint"]
+    args.pretrained_checkpoint = resolve_path(args.pretrained) if args.pretrained else None
+    if args.resume_checkpoint and args.pretrained_checkpoint:
+        raise ValueError("Choose either --resume or --pretrained, not both.")
+    if args.stage == "finetune" and not args.resume_checkpoint and not args.pretrained_checkpoint:
+        args.pretrained_checkpoint = paths["pretrained_checkpoint"]
+        if args.pretrained_checkpoint is None:
+            raise ValueError(
+                "Finetuning requires a pretraining checkpoint. Set paths.pretrained_checkpoint, "
+                "pass --pretrained, or resume an existing finetuning run with --resume."
+            )
+    for label, filename in (("resume_checkpoint", args.resume_checkpoint),
+                            ("pretrained_checkpoint", args.pretrained_checkpoint)):
+        if filename is not None:
+            _existing_file(label, filename)
+    # Fresh pretraining deliberately ignores paths.pretrained_checkpoint so a
+    # baseline starts from random initialization unless --pretrained is explicit.
+    return config, paths
 
-    # scale lr and warmup-step automatically
-    args.gpus = _n_gpus = setup_gpus(args.gpus)
-    config.TRAINER.WORLD_SIZE = _n_gpus * args.num_nodes
-    config.TRAINER.TRUE_BATCH_SIZE = config.TRAINER.WORLD_SIZE * args.batch_size
-    _scaling = config.TRAINER.TRUE_BATCH_SIZE / config.TRAINER.CANONICAL_BS
-    config.TRAINER.SCALING = _scaling
-    config.TRAINER.TRUE_LR = config.TRAINER.CANONICAL_LR * _scaling
-    # config.TRAINER.WARMUP_STEP = math.floor(config.TRAINER.WARMUP_STEP / _scaling)
 
-    # ----- pretrain -----
-    config.TRAINER.WARMUP_STEP = 1798 * 5  # step_number_per_epoch * epoch_number
-    config.TRAINER.MSLR_MILESTONES = [13, 17, 21, 23]  # default: [10, 15, 20, 25]
-
-    # ----- finetune -----
-    # config.TRAINER.TRUE_LR /= 4
-    # config.TRAINER.WARMUP_STEP = 0
-    # config.TRAINER.MSLR_MILESTONES = [5, 8, 11, 13]  # default: [3, 6, 9, 12]
-
-    # lightning module
-    profiler = build_profiler(args.profiler_name)
-    model = PL_DGIM(config, pretrained_ckpt=args.ckpt_path, profiler=profiler)
-    loguru_logger.info(f"DGIM LightningModule initialized!")
-
-    # lightning data
+def main():
+    args = parse_args()
+    config, paths = prepare_configuration(args)
+    pl.seed_everything(config.TRAINER.SEED, workers=True)
+    model = PL_DGIM(config, pretrained_ckpt=args.pretrained_checkpoint)
     data_module = MultiSceneDataModule(args, config)
-    loguru_logger.info(f"DGIM DataModule initialized!")
-
-    # TensorBoard Logger
-    logger = TensorBoardLogger(save_dir=paths['log_dir'], name=args.exp_name, default_hp_metric=False)
-    ckpt_dir = (Path(paths['checkpoint_dir']) / args.exp_name / f'version_{logger.version}'
-                if paths['checkpoint_dir'] else Path(logger.log_dir) / 'checkpoints')
-
-    # Callbacks
-    # TODO: update ModelCheckpoint to monitor multiple metrics
-    ckpt_callback = ModelCheckpoint(dirpath=str(ckpt_dir), filename='{epoch:02d}', save_top_k=-1)
-    lr_monitor = LearningRateMonitor(logging_interval='step')
-    callbacks = [lr_monitor]
+    tensorboard = TensorBoardLogger(
+        save_dir=paths["log_dir"], name=f"{args.exp_name}/{args.stage}", default_hp_metric=False
+    )
+    checkpoint_root = Path(paths["checkpoint_dir"] or paths["log_dir"])
+    checkpoint_dir = checkpoint_root / args.exp_name / args.stage
+    callbacks = [LearningRateMonitor(logging_interval="step")]
     if not args.disable_ckpt:
-        callbacks.append(ckpt_callback)
-
-    # Lightning Trainer
-    trainer = pl.Trainer.from_argparse_args(
-        args,
-        plugins=DDPPlugin(find_unused_parameters=True,
-                          num_nodes=args.num_nodes,
-                          sync_batchnorm=config.TRAINER.WORLD_SIZE > 0),
+        callbacks.append(ModelCheckpoint(
+            dirpath=checkpoint_dir,
+            filename="epoch={epoch:02d}",
+            auto_insert_metric_name=False,
+            save_top_k=-1,
+            save_last=True,
+            every_n_epochs=1,
+            save_on_train_epoch_end=True,
+            enable_version_counter=False,
+        ))
+    if args.stage == "finetune":
+        callbacks.append(EarlyStopping(
+            monitor="train/epoch_loss",
+            mode="min",
+            patience=config.TRAINER.EARLY_STOP_PATIENCE,
+            min_delta=config.TRAINER.EARLY_STOP_MIN_DELTA,
+            check_on_train_epoch_end=True,
+            check_finite=True,
+            strict=True,
+        ))
+    distributed = args.devices * args.num_nodes > 1
+    # The projection becomes unused after teacher stop_epoch, and matching can
+    # have empty supervision branches; DDP must support unused parameters.
+    strategy = DDPStrategy(find_unused_parameters=True) if distributed else "auto"
+    trainer = pl.Trainer(
+        accelerator=args.accelerator,
+        devices=args.devices,
+        num_nodes=args.num_nodes,
+        precision=args.precision,
+        strategy=strategy,
+        max_epochs=args.epochs,
+        accumulate_grad_batches=args.accumulate_grad_batches,
         gradient_clip_val=config.TRAINER.GRADIENT_CLIPPING,
         callbacks=callbacks,
-        logger=logger,
-        sync_batchnorm=config.TRAINER.WORLD_SIZE > 0,
-        replace_sampler_ddp=False,  # use custom sampler
-        reload_dataloaders_every_epoch=False,  # avoid repeated samples!
-        weights_summary='full',
-        profiler=profiler,
-        max_epochs=25)  # set the max number of epoch
-    loguru_logger.info(f"Trainer initialized!")
-    loguru_logger.info(f"Start training!")
-    trainer.fit(model, datamodule=data_module)
+        logger=tensorboard,
+        default_root_dir=paths["log_dir"],
+        enable_checkpointing=not args.disable_ckpt,
+        use_distributed_sampler=True,
+        reload_dataloaders_every_n_epochs=1,
+        sync_batchnorm=distributed and args.accelerator != "cpu",
+        num_sanity_val_steps=0,
+        log_every_n_steps=50,
+    )
+    logger.info(
+        "Starting {}: backbone={}, teacher during pretraining={}, checkpoints={}",
+        args.stage, config.DGIM.BACKBONE_TYPE, config.TEACHER.ENABLED, checkpoint_dir,
+    )
+    trainer.fit(model, datamodule=data_module, ckpt_path=args.resume_checkpoint)
 
 
-if __name__ == '__main__':
-    mp.set_start_method('spawn')
+if __name__ == "__main__":
     main()

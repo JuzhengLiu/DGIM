@@ -11,7 +11,7 @@ from tkinter import filedialog
 import matplotlib.pyplot as plt
 
 from src.config.paths import load_paths, resolve_path
-from src.dgim import DGIM, default_cfg, reparameter
+from src.utils.checkpoint import load_matcher
 
 warnings.filterwarnings("ignore")
 
@@ -68,21 +68,8 @@ if __name__ == "__main__":
         except OSError as exc:
             parser.error(f"Cannot create output directory {output_dir}: {exc}. Check demo_output_dir or --output-dir.")
 
-    # If matching is difficult, you can try lowering the threshold.
-    config = default_cfg
-    config["match_coarse"]["thr"] = 0.3  # default: 0.3
-    config["match_coarse"]["border_rm"] = 2  # default: 2
-    config["fine"]["thr"] = 0.1  # default: 0.1
-
     half_precision = True  # default: False
-
-    matcher = DGIM(config=config)
-    # If image sizes are too small, such as smaller than 384×384, use dgim_256.ckpt; otherwise, use dgim_512.ckpt.
-    matcher.load_state_dict(torch.load(str(checkpoint_path), map_location="cpu")["state_dict"])
-    matcher = reparameter(matcher)
-    matcher = matcher.eval().cuda()
-    if half_precision:
-        matcher = matcher.half()
+    matcher = load_matcher(checkpoint_path, device='cuda', half=half_precision)
 
     root = tk.Tk()
     root.withdraw()

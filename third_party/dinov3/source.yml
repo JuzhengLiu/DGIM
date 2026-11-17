@@ -1,0 +1,17 @@
+repository: 'https://github.com/facebookresearch/dinov3'
+source_file: 'dinov3/models/convnext.py'
+license: 'DINOv3 License Agreement; see LICENSE.md'
+source_snapshot: 'Existing local dinov3-main source supplied with this workspace'
+source_sha256: '3fd7f32601c487f54d4a95567a06f573ec3f1b211bddb84491949a6e8cb2433a'
+source_scope: 'Minimal ConvNeXt-Large definition retaining the official parameter tree'
+source_edits:
+  - 'Only the Large architecture and its block/normalization definitions are retained.'
+  - 'No stochastic depth in frozen evaluation; the official Large hub default is zero.'
+  - 'Forward stops after stage index 1 and returns its native 384-channel stride-8 map.'
+  - 'All four stages and both final-norm key aliases remain for strict checkpoint loading.'
+  - 'No hub, network access, weight download, or ViT code is included.'
+checkpoint:
+  model: 'dinov3_convnext_large_pretrain_lvd1689m'
+  expected_official_filename: 'dinov3_convnext_large_pretrain_lvd1689m-61fa432d.pth'
+  distribution: 'Obtain separately through the official DINOv3 download access process.'
+  storage: 'Local only; configured through paths.teacher_checkpoint.'

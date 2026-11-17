@@ -1,82 +1,78 @@
-from loguru import logger
+"""Training-only DataModule with an explicit pretrain/finetune lifecycle."""
 
 import pytorch_lightning as pl
-from torch import distributed as dist
+import torch
 from torch.utils.data import DataLoader
 
-from src.utils.augment import build_augmentor
-from src.datasets.multi_modality import MultiModality
 from src.config.paths import load_paths
+from src.datasets.multi_modality import MultiModality
 
 
 class MultiSceneDataModule(pl.LightningDataModule):
-    """
-    For distributed training, each training process is assgined
-    only a part of the training scenes to reduce memory overhead.
-    """
-
     def __init__(self, args, config):
         super().__init__()
-
-        # 1. data config
-        self.project_paths = getattr(args, 'project_paths', None)
+        self.config = config
+        self.project_paths = getattr(args, "project_paths", None)
         if self.project_paths is None:
-            self.project_paths = load_paths(getattr(args, 'paths_config', None))
-        self.train_data_root = self.project_paths['train_data_root']
-
-        # 2. dataset config
-        # general options
-        self.augment_fn = build_augmentor(config.DATASET.AUGMENTATION_TYPE)  # None, options: [None, 'dark', 'mobile']
-
-        # MegaDepth options
-        self.mtmd_img_resize = config.DATASET.MGDPT_IMG_RESIZE  # 840
-        self.mtmd_img_pad = config.DATASET.MGDPT_IMG_PAD  # True
-        self.mtmd_df = config.DATASET.MGDPT_DF  # 8
-        self.coarse_scale = 1 / config.DGIM.RESOLUTION[0]  # 0.125. for training dgim.
-
-        # 3.loader parameters
-        self.train_loader_params = {
-            'batch_size': args.batch_size,
-            'num_workers': args.num_workers,
-            'pin_memory': getattr(args, 'pin_memory', True)
-        }
-
-        # 4. misc configurations
-        self.seed = config.TRAINER.SEED  # 66
+            self.project_paths = load_paths(getattr(args, "paths_config", None))
+        self.stage = config.TRAINER.STAGE
+        self.batch_size = args.batch_size
+        self.num_workers = args.num_workers
+        self.pin_memory = getattr(args, "pin_memory", True)
+        self.seed = config.TRAINER.SEED
+        self.teacher_enabled = (
+            self.stage == "pretrain" and config.TEACHER.ENABLED and config.TEACHER.WEIGHT > 0
+        )
+        self.teacher_stop_epoch = config.TEACHER.STOP_EPOCH
+        self.train_dataset = None
+        if self.stage == "finetune" and self.num_workers != 0:
+            raise ValueError("Finetuning uses the frozen CUDA style generator; --num-workers must be 0.")
 
     def setup(self, stage=None):
-        """
-        Setup train dataset. This method will be called by PL automatically.
-        Args:
-            stage (str): 'fit' in training phase.
-        """
-
-        assert stage == 'fit', "stage must be fit"
-
-        try:
-            self.world_size = dist.get_world_size()
-            self.rank = dist.get_rank()
-            logger.info(f"[rank:{self.rank}] world_size: {self.world_size}")
-        except AssertionError as ae:
-            self.world_size = 1
-            self.rank = 0
-            logger.warning(str(ae) + " (set world_size = 1 and rank = 0)")
-
-        if stage == 'fit':
-            self.train_dataset = MultiModality(self.train_data_root,
-                                               mode='train',
-                                               img_resize=self.mtmd_img_resize,
-                                               df=self.mtmd_df,
-                                               img_padding=self.mtmd_img_pad,
-                                               augment_fn=self.augment_fn,
-                                               style_dir=self.project_paths['style_dir'],
-                                               style_checkpoint=self.project_paths['style_checkpoint'],
-                                               coarse_scale=self.coarse_scale)
-            logger.info(f'[rank:{self.rank}] Train Dataset loaded!')
+        if stage not in (None, "fit"):
+            raise ValueError("This DataModule implements training only (stage='fit').")
+        if self.train_dataset is not None:
+            return
+        augment_fn = None
+        if self.config.DATASET.AUGMENTATION_TYPE is not None:
+            from src.utils.augment import build_augmentor
+            augment_fn = build_augmentor(self.config.DATASET.AUGMENTATION_TYPE)
+        # Do not open teacher caches during setup: the restored epoch is not
+        # necessarily available yet. train_dataloader enables them when needed.
+        self.train_dataset = MultiModality(
+            self.project_paths["train_data_root"],
+            mode="train",
+            img_resize=self.config.DATASET.MGDPT_IMG_RESIZE,
+            df=self.config.DATASET.MGDPT_DF,
+            img_padding=self.config.DATASET.MGDPT_IMG_PAD,
+            augment_fn=augment_fn,
+            style_dir=self.project_paths["style_dir"],
+            style_checkpoint=self.project_paths["style_checkpoint"],
+            coarse_scale=1 / self.config.DGIM.RESOLUTION[0],
+            training_stage=self.stage,
+            teacher_cache_dir=self.project_paths.get("teacher_cache_dir"),
+            teacher_enabled=False,
+        )
 
     def train_dataloader(self):
-        """
-        Build training dataloader for MultiModality.
-        """
-        dataloader = DataLoader(self.train_dataset, **self.train_loader_params)
-        return dataloader
+        if self.train_dataset is None:
+            raise RuntimeError("The training dataset has not been set up.")
+        epoch = max(
+            self.trainer.current_epoch,
+            getattr(self.trainer.lightning_module, "resume_data_epoch", 0),
+        )
+        self.train_dataset.set_teacher_enabled(
+            self.teacher_enabled and epoch < self.teacher_stop_epoch
+        )
+        # Fresh workers observe the epoch's cache setting. The epoch seed also
+        # prevents a resumed loader from restarting the epoch-zero shuffle.
+        generator = torch.Generator().manual_seed(self.seed + epoch)
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            pin_memory=self.pin_memory,
+            shuffle=True,
+            persistent_workers=False,
+            generator=generator,
+        )

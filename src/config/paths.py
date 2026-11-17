@@ -27,6 +27,7 @@ PATH_KEYS = frozenset({
     "test_list_path", "test_intrinsic_path",
     "style_dir", "style_checkpoint", "matcher_checkpoint",
     "repvit_source_dir", "repvit_checkpoint",
+    "teacher_source_dir", "teacher_checkpoint", "teacher_cache_dir",
     "pretrained_checkpoint", "resume_checkpoint", "log_dir", "checkpoint_dir", "sample_dir",
     "demo_output_dir",
 })

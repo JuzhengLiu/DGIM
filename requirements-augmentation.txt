@@ -1,0 +1,4 @@
+# Install with --no-deps after requirements.txt. Their numerical dependencies
+# are already listed there; this avoids a second, non-contrib cv2 distribution.
+albumentations==1.3.1
+qudida==0.0.4

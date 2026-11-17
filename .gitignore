@@ -234,3 +234,9 @@ tmp/
 # Matching/backbone checkpoints stay local; keep their instructions tracked.
 /weights/**
 !/weights/README.md
+
+# Trained matchers, DINO targets and imported teacher weights are never published.
+*.ckpt
+*.pt
+*.pth
+!src/fast_neural_style/weights/epoch5.pth

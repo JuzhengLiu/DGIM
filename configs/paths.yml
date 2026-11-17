@@ -13,18 +13,24 @@ paths:
   style_dir: 'src/fast_neural_style/styles'
   style_checkpoint: 'src/fast_neural_style/weights/epoch5.pth'
 
-  # 匹配器权重：需要自行下载；不能用上面的风格权重替代
-  matcher_checkpoint: 'weights/dgim_512.ckpt'
-  pretrained_checkpoint: null  # 可选：训练时只加载模型权重
+  # v4 新模型须自己训练；原版 dgim_512.ckpt 仍可通过 demo --checkpoint 指定。
+  matcher_checkpoint: 'outputs/checkpoints/repvit_dino/finetune/last.ckpt'
+  # 默认预训练从随机参数开始；微调由这里载入上一阶段的匹配器。
+  pretrained_checkpoint: 'outputs/checkpoints/repvit_dino/pretrain/last.ckpt'
   resume_checkpoint: null      # 可选：恢复训练状态；与上一项按需择一使用
 
-  # RepViT 官方资源已保存；当前 DGIM 尚未切换骨干，下面两项暂供后续接入使用
+  # 保留的上游参考资源；v4 定制学生随机初始化，不加载分类权重。
   repvit_source_dir: 'third_party/repvit'
-  repvit_checkpoint: 'weights/repvit_m1_5_distill_450e.pth'
+  repvit_checkpoint: null
+
+  # DINOv3 ConvNeXt-Large：权重单独上传，代码随仓库提供，无隐式下载。
+  teacher_source_dir: 'third_party/dinov3'
+  teacher_checkpoint: 'weights/dinov3_convnext_large_pretrain_lvd1689m-61fa432d.pth'
+  teacher_cache_dir: 'outputs/teacher_cache'
 
   # 输出目录：在实际运行时创建
   log_dir: 'outputs/training'
-  checkpoint_dir: null         # 默认跟随日志；非空则作为独立 checkpoint 输出根
+  checkpoint_dir: 'outputs/checkpoints'
   sample_dir: 'sample'         # demo 输入目录 / GUI 选图初始目录
   demo_output_dir: 'outputs/matches'
 

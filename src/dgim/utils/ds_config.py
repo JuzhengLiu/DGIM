@@ -10,6 +10,7 @@ def lower_config(yacs_cfg):
 _CN = CN()
 # _CN.BACKBONE_TYPE = 'ResNetFPN'
 # _CN.RESOLUTION = (8, 2)  # options: [(8, 2), (16, 4)]
+# Legacy configuration for the authors' checkpoints without v4 model metadata.
 _CN.BACKBONE_TYPE = 'RepVGG'
 _CN.ALIGN_CORNER = False
 _CN.RESOLUTION = (8, 2)
