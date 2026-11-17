@@ -6,3 +6,5 @@ paths:
   demo_output_dir: '/root/autodl-tmp/DGIM_outputs/matches'
   # 如匹配器权重不放在默认 weights/ 下，可取消下一行注释并填写实际位置。
   # matcher_checkpoint: '/root/autodl-tmp/models/dgim_512.ckpt'
+  # RepViT 权重也需单独传到服务器；源码路径通常无需覆盖。
+  # repvit_checkpoint: '/root/autodl-tmp/models/repvit_m1_5_distill_450e.pth'

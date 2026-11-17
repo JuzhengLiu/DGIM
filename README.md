@@ -1,8 +1,10 @@
 # DGIM: Cascaded Dynamic Data Generation for Robust Cross-Modal Image Matching
 
-基于 [LotrL/DGIM](https://github.com/LotrL/DGIM) 的公开代码，增加集中路径配置，便于本地与 AutoDL 之间迁移。保留 Apache-2.0 LICENSE 和论文引用。当前版本 **v2**，修改记录见 [CHANGELOG.md](CHANGELOG.md)，版本号见 [VERSION](VERSION)。
+基于 [LotrL/DGIM](https://github.com/LotrL/DGIM) 的公开代码，增加集中路径配置，便于本地与 AutoDL 之间迁移。保留 Apache-2.0 LICENSE 和论文引用。当前版本 **v3**，修改记录见 [CHANGELOG.md](CHANGELOG.md)，版本号见 [VERSION](VERSION)。
 
 仓库包含源码、59 张风格图、风格网络 `epoch5.pth`、示例图和架构图。BIT 数据需要单独上传；DGIM 匹配器权重需要从下方作者链接获取。
+
+v3 新增 [RepViT 官方资源](third_party/repvit/README.md)：保存骨干实现和融合工具；M1.5 的 450-epoch 蒸馏预训练权重仅保存在本地，不随 Git 上传。路径统一使用 `configs/paths.yml` 中的 `repvit_source_dir` 和 `repvit_checkpoint`。这些资源尚未接入 DGIM：当前训练和推理仍使用原定制 RepVGG，也尚未实现 DINOv3 训练引导或生成缓存。
 
 ## 服务器更新代码
 
@@ -27,11 +29,11 @@ cp configs/paths.autodl.example.yml configs/paths.local.yml
 
 `cp` 只在首次配置且没有本机配置时执行，然后按实际位置编辑 `configs/paths.local.yml`。将训练数据单独放到 `/root/autodl-tmp/BIT_training_dataset/`；`train_data_root` 应指向解压后下一层就是 `scene01` 等场景的目录。匹配器权重默认放在 `weights/dgim_512.ckpt`。
 
-只有需要固定某个历史版本时，才在仓库目录执行下面两行，并把最后的 `v2` 换成所需版本：
+只有需要固定某个历史版本时，才在仓库目录执行下面两行，并把最后的 `v3` 换成所需版本：
 
 ```bash
 git fetch --tags
-git switch --detach v2
+git switch --detach v3
 ```
 
 回到最新版时，使用本节开头的三行命令。`v1`、`v2` 等已发布标签保持不变；之后每次交付修改递增版本号，并在 CHANGELOG 中写简短说明。

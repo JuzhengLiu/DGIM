@@ -18,6 +18,10 @@ paths:
   pretrained_checkpoint: null  # 可选：训练时只加载模型权重
   resume_checkpoint: null      # 可选：恢复训练状态；与上一项按需择一使用
 
+  # RepViT 官方资源已保存；当前 DGIM 尚未切换骨干，下面两项暂供后续接入使用
+  repvit_source_dir: 'third_party/repvit'
+  repvit_checkpoint: 'weights/repvit_m1_5_distill_450e.pth'
+
   # 输出目录：在实际运行时创建
   log_dir: 'outputs/training'
   checkpoint_dir: null         # 默认跟随日志；非空则作为独立 checkpoint 输出根

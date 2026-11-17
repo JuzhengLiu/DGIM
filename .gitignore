@@ -230,3 +230,7 @@ tmp/
 .vscode/
 
 # Keep the bundled style checkpoint and style/example images in Git.
+
+# Matching/backbone checkpoints stay local; keep their instructions tracked.
+/weights/**
+!/weights/README.md

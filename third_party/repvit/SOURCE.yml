@@ -1,0 +1,22 @@
+# Upstream file identities; local resource locations are managed in configs/paths.yml.
+repository: 'https://github.com/THU-MIG/RepViT'
+retrieved_on: '2026-11-17'
+license: 'Apache-2.0'
+source_scope: 'Official backbone implementation and support files; not the full training/SAM repository.'
+source_edits: 'No logic changes; text files have a final newline.'
+upstream_git_blobs:
+  'model/repvit.py': '8432a61813a512b54620cedb2a1f4126d6920f14'
+  'LICENSE': '261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64'
+  'README.md': 'c08eb9d98e26023d24d91951c48c324bc860d06c'
+  'model/__init__.py': '9f713ac62b88b786880b9eb5b02f35fcb15b85e3'
+  'utils.py': '55d648464fac89dee7888f8d9c7c655dfceda385'
+  'requirements.txt': '83190c159a26d3ec70db5c508a7c98a4b3745ad0'
+checkpoint:
+  model: 'repvit_m1_5'
+  training: 'ImageNet-1K, knowledge distillation, 450 epochs'
+  reported_top1_percent: 82.5
+  url: 'https://github.com/THU-MIG/RepViT/releases/download/v1.0/repvit_m1_5_distill_450e.pth'
+  bytes: 59433237
+  sha256: 'd645a2de5481c9aac1639d0e97b04cd4bdb0df9d7347920b132dd0ed45de8b39'
+  checksum_note: 'Computed from the local download; not an independently published upstream checksum.'
+  storage: 'Local only; excluded from Git.'
