@@ -183,9 +183,7 @@ class RepVGG(nn.Module):
                     out = checkpoint.checkpoint(block, out)
                 else:
                     out = block(out)
-        out = self.gap(out)
-        out = out.view(out.size(0), -1)
-        out = self.linear(out)
+        # The DGIM variant ends at stage3 and has no classification head.
         return out
 
 

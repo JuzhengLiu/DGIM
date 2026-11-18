@@ -31,9 +31,7 @@ class FineMatching(nn.Module):
         M, WW, C = feat_f0_unfold.shape
 
         # corner case: if no coarse matches found
-        if M == 0:
-            assert self.training == False, "M is always >0, when training, see coarse_matching.py"
-            # logger.warning('No matches found in coarse-level.')
+        if M == 0 and not self.training:
             data.update({
                 'mkpts0_f': data['mkpts0_c'],
                 'mkpts1_f': data['mkpts1_c'],
@@ -138,11 +136,6 @@ class FineMatching(nn.Module):
     def _select_matches(self, conf_matrix_fine):
         confidence = conf_matrix_fine.detach()
         mask = confidence > self.fine_thr
-        if not mask.any():
-            # Preserve the legacy fallback candidate without changing the
-            # confidence matrix used by the differentiable fine matching loss.
-            index = torch.zeros(1, dtype=torch.long, device=confidence.device)
-            return index, index, index, confidence.new_ones(1)
         mask = mask & (confidence == confidence.amax(dim=[1, 2], keepdim=True))
         mask_v, all_j_ids = mask.max(dim=2)
         b_ids, i_ids = torch.where(mask_v)

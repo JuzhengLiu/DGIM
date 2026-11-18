@@ -137,12 +137,10 @@ class MultiModality(Dataset):
         }
 
         # for DGIM training
-        if mask0 is not None:  # img_padding is True
-            [ts_mask_0, ts_mask_1] = F.interpolate(torch.stack([mask0, mask1], dim=0)[None].float(),
-                                                   scale_factor=self.coarse_scale,
-                                                   mode='nearest',
-                                                   recompute_scale_factor=False)[0].bool()
-            data.update({'mask0': ts_mask_0, 'mask1': ts_mask_1})
+        if mask0 is not None:  # Each view may have its own padded canvas.
+            for key, mask in (('mask0', mask0), ('mask1', mask1)):
+                data[key] = F.interpolate(mask[None, None].float(), scale_factor=self.coarse_scale,
+                                          mode='nearest', recompute_scale_factor=False)[0, 0].bool()
 
         if self.teacher_enabled:
             for suffix, image, image_mask in (('0', image0, mask0), ('1', image1, mask1)):
@@ -196,6 +194,10 @@ class MultiModality(Dataset):
 
         with torch.no_grad():
             output = self.style_model(content_image, style_image)
+            # Two stride-2 encoder layers and 2x decoder stages round each
+            # side up to a multiple of four. Keep the guide's pixel grid.
+            height, width = content_image.shape[-2:]
+            output = output[..., :height, :width]
             output = output.squeeze(0).clamp(0, 255).cpu().numpy().transpose(1, 2, 0).astype("uint8")
 
         # thermal_transform = BGRtoThermal()

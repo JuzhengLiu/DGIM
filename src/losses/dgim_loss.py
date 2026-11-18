@@ -25,29 +25,20 @@ class DGIMLoss(nn.Module):
             }
             weight (torch.Tensor): (N, HW0, HW1)
         """
-        conf_matrix_0_to_1 = data["conf_matrix_0_to_1"].float()
-        conf_matrix_1_to_0 = data["conf_matrix_1_to_0"].float()
-        conf_gt = data["conf_matrix_gt"]
-
-        pos_mask = conf_gt == 1
-        c_pos_w = self.pos_w
-        # corner case: no gt coarse-level match at all
-        if not pos_mask.any():  # assign a wrong gt
-            pos_mask[0, 0, 0] = True
-            if weight is not None:
-                weight[0, 0, 0] = 0.
-            c_pos_w = 0.
-
-        conf_matrix_0_to_1 = torch.clamp(conf_matrix_0_to_1, 1e-6, 1 - 1e-6)
-        conf_matrix_1_to_0 = torch.clamp(conf_matrix_1_to_0, 1e-6, 1 - 1e-6)
+        # Only positive correspondences contribute to this term. Select them
+        # before clamping instead of retaining two full [B, HW0, HW1] copies.
+        b, i, j = data["conf_matrix_gt"].nonzero(as_tuple=True)
+        forward = data["conf_matrix_0_to_1"][b, i, j].float().clamp(1e-6, 1 - 1e-6)
+        reverse = data["conf_matrix_1_to_0"][b, i, j].float().clamp(1e-6, 1 - 1e-6)
         alpha = self.loss_config['focal_alpha']
         gamma = self.loss_config['focal_gamma']
-        # dense supervision
-        loss_pos = - alpha * torch.pow(1 - conf_matrix_0_to_1[pos_mask], gamma) * (conf_matrix_0_to_1[pos_mask]).log()
-        loss_pos += - alpha * torch.pow(1 - conf_matrix_1_to_0[pos_mask], gamma) * (conf_matrix_1_to_0[pos_mask]).log()
+        loss_pos = -alpha * ((1 - forward).pow(gamma) * forward.log()
+                             + (1 - reverse).pow(gamma) * reverse.log())
         if weight is not None:
-            loss_pos = loss_pos * weight[pos_mask]
-        return c_pos_w * loss_pos.mean()
+            loss_pos = loss_pos * weight[b, i, j]
+        elif 'mask0' in data:
+            loss_pos = loss_pos * (data['mask0'].flatten(1)[b, i] & data['mask1'].flatten(1)[b, j])
+        return self.pos_w * loss_pos.sum() / max(loss_pos.numel(), 1)
 
     def compute_fine_loss(self, data):
         """
@@ -59,6 +50,8 @@ class DGIMLoss(nn.Module):
             }
         """
         conf_matrix_fine = data['conf_matrix_fine'].float()
+        if conf_matrix_fine.numel() == 0:
+            return conf_matrix_fine.sum()
         conf_matrix_f_gt = data['conf_matrix_f_gt']
         pos_mask, neg_mask = conf_matrix_f_gt > 0, conf_matrix_f_gt == 0
         pos_w, neg_w = self.pos_w, self.neg_w
@@ -80,22 +73,6 @@ class DGIMLoss(nn.Module):
 
         return pos_w * loss_pos.mean() + neg_w * loss_neg.mean()
 
-    def _compute_re_projection_error(self, kpts0, kpts1, T_0to1):
-        """
-        Args:
-        data (dict): {
-            kpts0 (torch.Tensor): (N, 2)
-            kpts1 (torch.Tensor): (N, 2)
-            T_0to1 (torch.Tensor): (N, 3, 3)
-            }
-        """
-        kpts0_homo = torch.cat((kpts0, kpts0.new_ones(kpts0.shape[0], 1)), dim=1).unsqueeze(2)
-        warped_kpts0_homo = torch.matmul(T_0to1, kpts0_homo)  # (N, 3, 1)
-        warped_kpts0 = (warped_kpts0_homo[:, :2, :] / warped_kpts0_homo[:, 2:, :]).squeeze(2)  # (N, 2)
-        # vector_norm has a defined zero gradient at exact correspondence.
-        distances = torch.linalg.vector_norm(warped_kpts0 - kpts1, dim=1)
-        return distances
-
     def compute_sub_pixel_loss(self, data):
         """
         Args:
@@ -113,23 +90,17 @@ class DGIMLoss(nn.Module):
 
         # Geometry stays in FP32 even when the matcher uses mixed precision.
         with torch.autocast(device_type=kpts0.device.type, enabled=False):
-            re_projection_error = self._compute_re_projection_error(
-                kpts0.float(), kpts1.float(), T_0to1.float())
-
-        # filter matches with high re-projection error (only train approximately correct fine-level matches)
-        loss = re_projection_error[re_projection_error <= 5.0]  # default: 5.0
-        if len(loss) == 0:
-            return (kpts0.sum() + kpts1.sum()) * 0.0
-        return loss.mean()
-
-    @torch.no_grad()
-    def compute_c_weight(self, data):
-        """ compute element-wise weights for computing coarse-level loss. """
-        if 'mask0' in data:
-            c_weight = (data['mask0'].flatten(-2)[..., None] * data['mask1'].flatten(-2)[:, None]).float()
-        else:
-            c_weight = None
-        return c_weight
+            kpts0, kpts1 = kpts0.float(), kpts1.float()
+            homogeneous = torch.cat((kpts0, torch.ones_like(kpts0[:, :1])), dim=1)
+            projected = (T_0to1.float() @ homogeneous.unsqueeze(-1)).squeeze(-1)
+            xy, z = projected[:, :2], projected[:, 2:]
+            # Apply DGIM's five-pixel cutoff in homogeneous coordinates. A
+            # point on the projective horizon must never enter the division.
+            with torch.no_grad():
+                residual = torch.linalg.vector_norm(xy - kpts1 * z, dim=1)
+                keep = (z[:, 0] != 0) & (residual <= 5.0 * z[:, 0].abs())
+            distances = torch.linalg.vector_norm(xy[keep] / z[keep] - kpts1[keep], dim=1)
+            return distances.sum() / max(distances.numel(), 1)
 
     def forward(self, data):
         """
@@ -140,11 +111,8 @@ class DGIMLoss(nn.Module):
             }
         """
         loss_scalars = {}
-        # 0. compute element-wise loss weight
-        c_weight = self.compute_c_weight(data)
-
         # 1. coarse-level loss
-        loss_c = self.compute_coarse_loss(data, weight=c_weight)
+        loss_c = self.compute_coarse_loss(data)
         loss_c *= self.loss_config['coarse_weight']
         loss = loss_c
         loss_scalars.update({"loss_c": loss_c.detach()})

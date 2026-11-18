@@ -71,42 +71,31 @@ def spvs_coarse(data, config):
     w_pt1_c_round = w_pt1_c[:, :, :].round().long()
     nearest_index0 = w_pt1_c_round[..., 0] + w_pt1_c_round[..., 1] * w0
 
-    # corner case: out of boundary
-    def out_bound_mask(pt, w, h):
-        return (pt[..., 0] < 0) + (pt[..., 0] >= w) + (pt[..., 1] < 0) + (pt[..., 1] >= h)
+    # Keep the union of in-bounds forward and reverse matches. A valid match
+    # at grid index zero has the same status as every other image point.
+    def inside_grid(points, width, height):
+        x, y = points.unbind(-1)
+        return (x >= 0) & (x < width) & (y >= 0) & (y < height)
 
-    nearest_index1[out_bound_mask(w_pt0_c_round, w1, h1)] = 0
-    nearest_index0[out_bound_mask(w_pt1_c_round, w0, h0)] = 0
-
-    arange_1 = torch.arange(h0 * w0, device=device)[None].repeat(N, 1)
-    arange_0 = torch.arange(h1 * w1, device=device)[None].repeat(N, 1)
-    arange_1[nearest_index1 == 0] = 0
-    arange_0[nearest_index0 == 0] = 0
-    arange_b = torch.arange(N, device=device).unsqueeze(1)
-
-    # 4. construct a gt conf_matrix
+    b0, i = torch.where(inside_grid(w_pt0_c_round, w1, h1))
+    b1, j = torch.where(inside_grid(w_pt1_c_round, w0, h0))
     conf_matrix_gt = torch.zeros(N, h0 * w0, h1 * w1, device=device)
-    conf_matrix_gt[arange_b, arange_1, nearest_index1] = 1
-    conf_matrix_gt[arange_b, nearest_index0, arange_0] = 1
+    conf_matrix_gt[b0, i, nearest_index1[b0, i]] = 1
+    conf_matrix_gt[b1, nearest_index0[b1, j], j] = 1
     if 'mask0' in data:
         # Zeroing padded coordinates above is insufficient for a translated
         # homography: (0,0) can warp into the valid image. Exclude padded pairs
         # before sampling the ground-truth windows for fine supervision.
         conf_matrix_gt.masked_fill_(~data['mask0'].flatten(-2)[..., None], 0)
         conf_matrix_gt.masked_fill_(~data['mask1'].flatten(-2)[:, None], 0)
-    conf_matrix_gt[:, 0, 0] = False
 
     b_ids, i_ids, j_ids = conf_matrix_gt.nonzero(as_tuple=True)
 
     data.update({'conf_matrix_gt': conf_matrix_gt})
 
-    # 5. save coarse matches(gt) for training fine level
+    # Keep empty ground truth empty. Training can still sample real predictions.
     if len(b_ids) == 0:
         logger.warning("No groundtruth coarse match found for pair ids: {}", data['pair_id'])
-        # this won't affect fine-level loss calculation
-        b_ids = torch.tensor([0], device=device)
-        i_ids = torch.tensor([0], device=device)
-        j_ids = torch.tensor([0], device=device)
 
     data.update({
         'spv_b_ids': b_ids,
@@ -149,8 +138,9 @@ def spvs_fine(data, config):
     N, _, H0, W0 = data['image0'].shape
     _, _, H1, W1 = data['image1'].shape
     scale = config['DGIM']['RESOLUTION'][1]
-    scale0 = scale * data['scale0'][:, None] if 'scale0' in data else scale
-    scale1 = scale * data['scale1'][:, None] if 'scale1' in data else scale
+    unit_scale = data['image0'].new_full((N, 1, 2), scale, dtype=torch.float32)
+    scale0 = scale * data['scale0'][:, None] if 'scale0' in data else unit_scale
+    scale1 = scale * data['scale1'][:, None] if 'scale1' in data else unit_scale
     h0, w0, h1, w1 = map(lambda x: x // scale, [H0, W0, H1, W1])
     scale_f_c = config['DGIM']['RESOLUTION'][0] // config['DGIM']['RESOLUTION'][1]
     W_f = config['DGIM']['FINE_WINDOW_SIZE']
@@ -158,7 +148,7 @@ def spvs_fine(data, config):
     b_ids, i_ids, j_ids = data['b_ids'], data['i_ids'], data['j_ids']
 
     if len(b_ids) == 0:
-        data.update({'conf_matrix_f_gt': torch.zeros(1, W_f * W_f, W_f * W_f, device=device)})
+        data.update({'conf_matrix_f_gt': torch.zeros(0, W_f * W_f, W_f * W_f, device=device)})
         return
 
     # 2. warp grids
@@ -236,7 +226,6 @@ def spvs_fine(data, config):
     correct_0to1 = loop_back == torch.arange(W_f * W_f, device=device)[None].repeat(M, 1)
     correct_0to1 &= inside0 & inside1.gather(1, nearest_index1)
     correct_0to1 &= valid0 & valid1.gather(1, nearest_index1)
-    correct_0to1[:, 0] = False  # ignore the top-left corner
 
     # 4. construct a gt conf_matrix
     conf_matrix_f_gt = torch.zeros(M, W_f * W_f, W_f * W_f, device=device)

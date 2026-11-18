@@ -5,8 +5,8 @@ from pathlib import Path
 
 import torch
 
-from src.config.default import get_cfg_defaults
 from src.config.paths import load_paths
+from src.config.training import load_stage_config
 from src.datasets.preprocessing import enumerate_training_pairs, read_clean_gray
 from src.teacher.cache import TeacherCache
 from src.teacher.extract import extract_teacher_feature, load_frozen_teacher
@@ -15,6 +15,9 @@ from src.teacher.extract import extract_teacher_feature, load_frozen_teacher
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--paths', default=None, help='YML path overrides; same selector as train.py.')
+    parser.add_argument('--config', dest='stage_config', help='Pretraining YML, as in train.py --stage pretrain.')
+    parser.add_argument('--model-config', help='Model configuration override, as in train.py.')
+    parser.add_argument('--data-config', help='Data configuration override, as in train.py.')
     parser.add_argument('--device', default='cuda', help='Offline extraction device, e.g. cuda or cpu.')
     return parser.parse_args()
 
@@ -22,9 +25,8 @@ def parse_args():
 def main():
     args = parse_args()
     paths = load_paths(args.paths)
-    config = get_cfg_defaults()
-    config.merge_from_file(paths['model_config'])
-    config.merge_from_file(paths['data_config'])
+    config = load_stage_config(paths, 'pretrain', model_config=args.model_config,
+                               data_config=args.data_config, stage_config=args.stage_config)
     root = Path(paths['train_data_root'])
     checkpoint = paths['teacher_checkpoint']
     if checkpoint is None or not Path(checkpoint).is_file():

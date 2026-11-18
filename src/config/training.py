@@ -6,15 +6,24 @@ from src.config.default import get_cfg_defaults
 from src.config.paths import load_paths, resolve_path
 
 
+def load_stage_config(paths, stage, *, model_config=None, data_config=None, stage_config=None):
+    """Use the same image geometry for offline targets and their training run."""
+    config = get_cfg_defaults()
+    model_file = resolve_path(model_config) if model_config else paths['model_config']
+    data_file = resolve_path(data_config) if data_config else paths['data_config']
+    stage_file = resolve_path(stage_config) if stage_config else paths[f'{stage}_config']
+    for filename in (model_file, data_file, stage_file):
+        with Path(filename).open(encoding='utf-8-sig') as stream:
+            config.merge_from_other_cfg(config.load_cfg(stream))
+    if config.TRAINER.STAGE != stage:
+        raise ValueError(f'{stage_file} must declare TRAINER.STAGE={stage}.')
+    return config
+
+
 def prepare_training(args):
     paths = load_paths(args.paths_config)
-    config = get_cfg_defaults()
-    config.merge_from_file(resolve_path(args.main_cfg_path) if args.main_cfg_path else paths['model_config'])
-    config.merge_from_file(resolve_path(args.data_cfg_path) if args.data_cfg_path else paths['data_config'])
-    stage_config = resolve_path(args.stage_config) if args.stage_config else paths[f'{args.stage}_config']
-    config.merge_from_file(stage_config)
-    if config.TRAINER.STAGE != args.stage:
-        raise ValueError(f'{stage_config} must declare TRAINER.STAGE={args.stage}.')
+    config = load_stage_config(paths, args.stage, model_config=args.main_cfg_path,
+                               data_config=args.data_cfg_path, stage_config=args.stage_config)
 
     # Command-line values override only explicitly supplied options.
     overrides = {

@@ -1,6 +1,6 @@
 # DGIM：定制 RepViT 与训练期 DINOv3 引导
 
-基于 [LotrL/DGIM](https://github.com/LotrL/DGIM) 修改。当前版本 **v5**，修改记录见 [CHANGELOG.md](CHANGELOG.md)，本轮问题核查见 [静态审查记录](docs/AUDIT_v5.md)。**尚未安装环境或运行缓存提取、训练、推理、测试、测速**；不代表已复现论文指标。
+当前版本 **v6**。本版修正匹配监督、空候选处理和离线缓存配置。已完成静态审查，训练显存、速度和匹配精度仍待实测。[作者代码](https://github.com/LotrL/DGIM) · [版本记录](CHANGELOG.md) · [v5 静态审查记录](docs/AUDIT_v5.md)
 
 预训练与微调是**两次手动启动的独立训练**，前者结束后程序退出，不自动启动后者：
 
@@ -58,7 +58,7 @@ git switch main
 git pull --ff-only
 ```
 
-固定本次版本：`git fetch --tags`，然后`git switch --detach v5`。返回最新版用上面的三行。标签不覆盖，后续交付按v6、v7递增。
+需要固定 v6 做对照实验时，依次执行 `git fetch --tags` 和 `git switch --detach v6`。返回最新版用上面的三行。
 
 ## 路径和资源
 
@@ -134,7 +134,7 @@ paths:
 
 命令行只覆盖明确传入的值，如`--epochs 50 --save-every-n-epochs 2 --run-name run02`。可以通过`--config`选择另一份阶段YML，或在路径YML中修改`pretrain_config`/`finetune_config`；模型/数据配置先合并，阶段YML随后合并，CLI最后覆盖。
 
-从v4升级时，如果本机YML写过`pretrained_checkpoint`，请改名为`finetune_init_checkpoint`；`resume_checkpoint`改为对应阶段的`pretrain_resume_checkpoint`或`finetune_resume_checkpoint`。v4匹配器checkpoint可以通过init/`--pretrained`载入同结构新训练；v5的完整resume使用v5保存的训练元数据。不需要迁移本地教师缓存。
+从 v4 升级时，将本机 YML 中的 `pretrained_checkpoint` 改为 `finetune_init_checkpoint`，将 `resume_checkpoint` 改为对应阶段的 `pretrain_resume_checkpoint` 或 `finetune_resume_checkpoint`。v4 匹配器 checkpoint 可通过 `--pretrained` 初始化同结构模型。v5 和 v6 的完整续训使用相同的训练元数据格式。要复现 v5 的训练轨迹，请固定 v5 代码，v6 已修正监督和候选选择。
 
 ## 后续在服务器执行
 
@@ -152,6 +152,8 @@ pip install --no-deps -r requirements-augmentation.txt
 ```bash
 python prepare_teacher_cache.py
 ```
+
+默认读取 `configs/pretrain.yml`。若预训练指定了自定义配置，生成缓存时也传入相同的 `--config`、`--model-config` 或 `--data-config`。两者按模型、数据、阶段的顺序合并设置。教师来源、数据和预处理相同的已有缓存可继续使用。
 
 它按训练集引用的去重原图提取干净灰度目标，保存FP16特征和有效mask，并写`manifest.yml`记录教师、预处理和完成状态。相同图片多次用于配对不会重复保存。缓存按数据根目录内的相对路径定位，便于迁移服务器。512输入下8030张图片的裸特征约25.26 GB，另有mask与文件元数据；实际图片数以数据集为准。这是使用教师路线的一次性独立准备命令，训练入口不会自动提取、下载或执行预检训练；无教师对照不需要这一步。
 
@@ -213,6 +215,7 @@ python demo.py --no-show
 - 预训练/微调切换、实际步数warmup、checkpoint恢复和新旧骨干演示使用同一套明确接口。没有在线教师、自动下载、自动改模型或错误后退回另一条训练路径。
 - 复用原DGIM注意力、候选筛选和几何监督。原风格网络及其权重保持配套，不擅自改变其内部残差调用行为。
 - v5修复半精度粗匹配掩码溢出、BF16 RoPE类型、半精度亚像素坐标/OpenCV输入、空GT分支、padding监督、增强零分母和Pillow10接口，并删除失效通用增强配置与逐图CUDA缓存清空，详见[静态审查记录](docs/AUDIT_v5.md)。
+- v6 用显式边界判断保留粗网格原点和细窗口左上角的有效监督，细匹配全部低于阈值时返回空结果。亚像素损失在除法前排除投影分母为零的点。四个回归用例覆盖恒等变换、低置信度、无重叠和投影分母为零的情形。[回归用例](tests/test_matching_edges.py)
 - 仅做源码交叉审查、Python语法和YML静态检查。未运行任何模型或测试，因此实际权重加载、融合数值等价、显存、训练稳定性、推理速度和准确率尚未实测。
 - 原仓库没有完整论文指标评测入口；demo的MAGSAC可视化不是定量复现。需要同条件比较原DGIM、新骨干无教师、新骨干加教师，才能判断实验收益。
 

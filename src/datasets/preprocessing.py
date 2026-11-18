@@ -19,14 +19,17 @@ def enumerate_training_pairs(root_dir):
             for folder in sorted(scene_pair.iterdir()):
                 if not folder.is_dir():
                     continue
-                files = sorted(p for p in folder.iterdir() if p.is_file())
-                for index in range(3, len(files), 2):
-                    if index + 1 >= len(files):
-                        raise ValueError(f'Missing transform after {files[index]}')
+                # BIT supplies reference 00, identity target 00_, and numbered
+                # distorted PNGs with same-stem homographies. Match names so an
+                # unrelated file or extension case cannot shift the labels.
+                files = {(p.stem, p.suffix.lower()): p for p in folder.iterdir() if p.is_file()}
+                targets = sorted(stem for stem, ext in files
+                                 if ext == '.png' and stem.isdecimal() and stem != '00')
+                for stem in targets:
                     pairs.append({
-                        'image0_path': str(files[0]),
-                        'image1_path': str(files[index]),
-                        'affine_matrix_path': str(files[index + 1]),
+                        'image0_path': str(files['00', '.png']),
+                        'image1_path': str(files[stem, '.png']),
+                        'affine_matrix_path': str(files[stem, '.txt']),
                     })
     # Reproduce the released order without resetting the process-wide RNG.
     np.random.RandomState(42).shuffle(pairs)

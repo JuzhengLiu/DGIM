@@ -3,7 +3,7 @@
 All weights in this directory stay local and are excluded from Git. Paths are
 managed in `configs/paths.yml`, with machine overrides in `paths.local.yml`.
 
-| Resource | Use in v5 |
+| Resource | Use |
 |---|---|
 | `dinov3_convnext_large_pretrain_lvd1689m-61fa432d.pth` | Required only for offline teacher-cache preparation; obtain the official backbone state dictionary through https://github.com/facebookresearch/dinov3 |
 | Original `dgim_512.ckpt` / `dgim_256.ckpt` | Optional author-baseline inference; incompatible with the custom RepViT backbone |

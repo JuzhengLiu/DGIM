@@ -4,6 +4,7 @@ import argparse
 
 from loguru import logger
 import pytorch_lightning as pl
+import torch
 from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.strategies import DDPStrategy
@@ -77,7 +78,7 @@ def main():
         callbacks=callbacks, logger=tensorboard, default_root_dir=paths['log_dir'],
         enable_checkpointing=not args.disable_ckpt, use_distributed_sampler=True,
         reload_dataloaders_every_n_epochs=1,
-        sync_batchnorm=distributed and args.accelerator != 'cpu',
+        sync_batchnorm=distributed and args.accelerator in ('auto', 'gpu') and torch.cuda.is_available(),
         num_sanity_val_steps=0, log_every_n_steps=50,
     )
     logger.info(

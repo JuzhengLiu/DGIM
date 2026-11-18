@@ -1,6 +1,7 @@
 import copy
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from .linear_attention import Attention
 from einops.einops import rearrange
 from ..utils.position_encoding import RoPEPositionEncodingSine
@@ -140,7 +141,6 @@ class LocalFeatureTransformer(nn.Module):
             mask_H0, mask_W0, mask_H1, mask_W1 = mask0.size(-2), mask0.size(-1), mask1.size(-2), mask1.size(-1)
             mask_h0, mask_w0, mask_h1, mask_w1 = mask0[0].sum(-2)[0], mask0[0].sum(-1)[0], mask1[0].sum(-2)[0], \
             mask1[0].sum(-1)[0]
-            mask_h0, mask_w0, mask_h1, mask_w1 = mask_h0, mask_w0, mask_h1, mask_w1
             feat0 = feat0[:, :, :mask_h0, :mask_w0]
             feat1 = feat1[:, :, :mask_h1, :mask_w1]
             feature_cropped = True
@@ -161,25 +161,9 @@ class LocalFeatureTransformer(nn.Module):
                 raise KeyError
 
         if feature_cropped:
-            # padding feature
-            bs, c, mask_h0, mask_w0 = feat0.size()
-            if mask_h0 != mask_H0:
-                feat0 = torch.cat(
-                    [feat0, torch.zeros(bs, c, mask_H0 - mask_h0, mask_W0, device=feat0.device, dtype=feat0.dtype)],
-                    dim=-2)
-            elif mask_w0 != mask_W0:
-                feat0 = torch.cat(
-                    [feat0, torch.zeros(bs, c, mask_H0, mask_W0 - mask_w0, device=feat0.device, dtype=feat0.dtype)],
-                    dim=-1)
-
-            bs, c, mask_h1, mask_w1 = feat1.size()
-            if mask_h1 != mask_H1:
-                feat1 = torch.cat(
-                    [feat1, torch.zeros(bs, c, mask_H1 - mask_h1, mask_W1, device=feat1.device, dtype=feat1.dtype)],
-                    dim=-2)
-            elif mask_w1 != mask_W1:
-                feat1 = torch.cat(
-                    [feat1, torch.zeros(bs, c, mask_H1, mask_W1 - mask_w1, device=feat1.device, dtype=feat1.dtype)],
-                    dim=-1)
+            if feat0.shape[-2:] != (mask_H0, mask_W0):
+                feat0 = F.pad(feat0, (0, mask_W0 - feat0.size(-1), 0, mask_H0 - feat0.size(-2)))
+            if feat1.shape[-2:] != (mask_H1, mask_W1):
+                feat1 = F.pad(feat1, (0, mask_W1 - feat1.size(-1), 0, mask_H1 - feat1.size(-2)))
 
         return feat0, feat1

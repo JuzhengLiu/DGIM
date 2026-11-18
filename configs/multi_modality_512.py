@@ -1,4 +1,6 @@
-from configs.base import cfg
+from configs.base import cfg as base_config
+
+cfg = base_config.clone()
 
 # Filesystem locations are supplied by configs/paths.yml in train.py.
 # The released DataModule only implements training; no MegaDepth test set is bundled.

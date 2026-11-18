@@ -10,7 +10,6 @@ from einops.einops import rearrange
 
 if hasattr(F, 'scaled_dot_product_attention'):
     FLASH_AVAILABLE = True
-    from torch.backends.cuda import sdp_kernel
 else:
     FLASH_AVAILABLE = False
 
@@ -27,13 +26,9 @@ def crop_feature(query, key, value, x_mask, source_mask):
 def pad_feature(m, mask_h0, mask_w0, x_mask):
     bs, L, H, D = m.size()
     m = m.view(bs, mask_h0, mask_w0, H, D)
-    if mask_h0 != x_mask.size(-2):
-        m = torch.cat([m, torch.zeros(m.size(0), x_mask.size(-2) - mask_h0, x_mask.size(-1), H, D, device=m.device,
-                                      dtype=m.dtype)], dim=1)
-    elif mask_w0 != x_mask.size(-1):
-        m = torch.cat([m, torch.zeros(m.size(0), x_mask.size(-2), x_mask.size(-1) - mask_w0, H, D, device=m.device,
-                                      dtype=m.dtype)], dim=2)
-    return m
+    height_pad = x_mask.size(-2) - m.size(1)
+    width_pad = x_mask.size(-1) - m.size(2)
+    return F.pad(m, (0, 0, 0, 0, 0, width_pad, 0, height_pad)) if height_pad or width_pad else m
 
 
 class Attention(Module):
@@ -46,11 +41,8 @@ class Attention(Module):
 
     def attention(self, query, key, value, q_mask=None, kv_mask=None):
         assert q_mask is None and kv_mask is None, "Not support generalized attention mask yet."
-        if self.flash and not self.fp32:
-            args = [x.contiguous() for x in [query, key, value]]
-            with sdp_kernel(enable_math=False, enable_flash=True, enable_mem_efficient=False):
-                out = F.scaled_dot_product_attention(*args)
-        elif self.flash:
+        if self.flash:
+            # PyTorch chooses a supported attention kernel for the input dtype and device.
             args = [x.contiguous() for x in [query, key, value]]
             out = F.scaled_dot_product_attention(*args)
         else:

@@ -168,33 +168,23 @@ class CoarseMatching(nn.Module):
             else:
                 num_candidates_max = compute_max_candidates(
                     data['mask0'], data['mask1'])
-            num_matches_train = int(num_candidates_max *
-                                    self.train_coarse_percent)
+            num_gt = len(data['spv_b_ids'])
+            num_matches_train = int(num_candidates_max * self.train_coarse_percent)
+            if num_gt:
+                num_matches_train = max(1, num_matches_train)
+            min_gt = min(self.train_pad_num_gt_min, num_matches_train) if num_gt else 0
+            pred_budget = num_matches_train - min_gt
             num_matches_pred = len(b_ids)
-            assert self.train_pad_num_gt_min < num_matches_train, "min-num-gt-pad should be less than num-train-matches"
-
-            # pred_indices is to select from prediction
-            if num_matches_pred <= num_matches_train - self.train_pad_num_gt_min:
-                pred_indices = torch.arange(num_matches_pred, device=_device)
-            else:
-                pred_indices = torch.randint(
-                    num_matches_pred,
-                    (num_matches_train - self.train_pad_num_gt_min, ),
-                    device=_device)
-
-            # gt_pad_indices is to select from gt padding. e.g. max(3787-4800, 200)
-            gt_pad_indices = torch.randint(
-                    len(data['spv_b_ids']),
-                    (max(num_matches_train - num_matches_pred,
-                        self.train_pad_num_gt_min), ),
-                    device=_device)
-            mconf_gt = torch.zeros(len(data['spv_b_ids']), device=_device)  # set conf of gt paddings to all zero
-
-            b_ids, i_ids, j_ids, mconf = map(
-                lambda x, y: torch.cat([x[pred_indices], y[gt_pad_indices]],
-                                       dim=0),
-                *zip([b_ids, data['spv_b_ids']], [i_ids, data['spv_i_ids']],
-                     [j_ids, data['spv_j_ids']], [mconf, mconf_gt]))
+            if num_matches_pred > pred_budget:
+                pred_indices = torch.randint(num_matches_pred, (pred_budget,), device=_device)
+                b_ids, i_ids, j_ids, mconf = (v[pred_indices] for v in (b_ids, i_ids, j_ids, mconf))
+            if num_gt:
+                # Fill the remaining windows with genuine homography correspondences.
+                gt_indices = torch.randint(num_gt, (num_matches_train - len(b_ids),), device=_device)
+                b_ids = torch.cat((b_ids, data['spv_b_ids'][gt_indices]))
+                i_ids = torch.cat((i_ids, data['spv_i_ids'][gt_indices]))
+                j_ids = torch.cat((j_ids, data['spv_j_ids'][gt_indices]))
+                mconf = torch.cat((mconf, mconf.new_zeros(gt_indices.shape)))
 
         # These matches select patches that feed into fine-level network
         coarse_matches = {'b_ids': b_ids, 'i_ids': i_ids, 'j_ids': j_ids}

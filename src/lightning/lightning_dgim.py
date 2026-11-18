@@ -151,7 +151,7 @@ class PL_DGIM(pl.LightningModule):
         if "LR" not in saved_trainer:
             raise ValueError(
                 "This checkpoint uses the v4 training schedule. Load its matcher with "
-                "--pretrained in a new run; v5 --resume requires v5 training metadata."
+                "--pretrained in a new run. Full resume requires training metadata from v5 or later."
             )
         for section in ("DGIM", "TEACHER"):
             if saved.get(section) != self.training_config[section]:

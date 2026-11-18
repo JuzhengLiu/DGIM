@@ -64,9 +64,10 @@ class FinePreprocess(nn.Module):
         stride = data['hw0_f'][0] // data['hw0_c'][0]
 
         data.update({'W': W})
-        if data['b_ids'].shape[0] == 0:
-            feat0 = torch.empty(0, self.W**2, self.fine_d_model, device=feat_c0.device)
-            feat1 = torch.empty(0, self.W**2, self.fine_d_model, device=feat_c0.device)
+        # All training ranks must execute the FPN, including its SyncBatchNorms.
+        if not self.training and data['b_ids'].numel() == 0:
+            feat0 = feat_c0.new_empty((0, self.W**2, self.fine_d_model))
+            feat1 = feat_c1.new_empty((0, self.W**2, self.fine_d_model))
             return feat0, feat1
 
         if data['hw0_i'] == data['hw1_i']:
